@@ -104,7 +104,7 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
   bool isLoading = true;
   int currentWeek = 3;
   int selectedWeek = 3;
-  int todayIndex = 16; // dynamic
+  int todayIndex = 16;
 
   final DateTime startDate = DateTime(2026, 10, 5);
 
@@ -157,7 +157,6 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
         }
       }
 
-      // Check SharedPreferences for user-modified values
       final prefs = await SharedPreferences.getInstance();
       for (var w in items) {
         final saved = prefs.getString('w_${w.index}');
@@ -179,6 +178,161 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('w_${w.index}', jsonEncode(w.toMap()));
     setState(() {});
+  }
+
+  int _paceToSeconds(String pace) {
+    if (pace.isEmpty || pace == '-') return 0;
+    final parts = pace.split(':');
+    try {
+      if (parts.length == 3) {
+        return int.parse(parts[0]) * 3600 + int.parse(parts[1]) * 60 + int.parse(parts[2]);
+      } else if (parts.length == 2) {
+        return int.parse(parts[0]) * 60 + int.parse(parts[1]);
+      }
+    } catch (_) {}
+    return 0;
+  }
+
+  String _secondsToPace(double avgSec) {
+    if (avgSec <= 0) return '-';
+    final total = avgSec.round();
+    final m = total ~/ 60;
+    final s = total % 60;
+    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+  }
+
+  void _showBlockStats() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.85,
+        maxChildSize: 0.95,
+        minChildSize: 0.5,
+        expand: false,
+        builder: (_, scrollCtrl) => Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Column(
+            children: [
+              Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[400], borderRadius: BorderRadius.circular(2))),
+              const SizedBox(height: 12),
+              const Text('5 Hetes Periodizációs Blokkok', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 10),
+              Expanded(
+                child: ListView.builder(
+                  controller: scrollCtrl,
+                  itemCount: 10,
+                  itemBuilder: (ctx, b) {
+                    final startW = b * 5 + 1;
+                    final endW = (b + 1) * 5;
+
+                    double planMin = 0;
+                    double planKm = 0;
+                    double swimKm = 0;
+                    double bikeKm = 0;
+                    double runKm = 0;
+
+                    int swimSecSum = 0;
+                    int swimCnt = 0;
+                    double bikeSpdSum = 0;
+                    int bikeCnt = 0;
+                    int runSecSum = 0;
+                    int runCnt = 0;
+
+                    for (var w in workouts) {
+                      if (w.week >= startW && w.week <= endW) {
+                        planMin += w.planTime;
+                        planKm += w.planDist;
+                        swimKm += w.actSwim;
+                        bikeKm += w.actBike;
+                        runKm += w.actRun;
+
+                        final sSec = _paceToSeconds(w.swimPace);
+                        if (w.actSwim > 0 && sSec > 0) {
+                          swimSecSum += sSec;
+                          swimCnt++;
+                        }
+                        if (w.actBike > 0 && w.bikeSpeed > 0) {
+                          bikeSpdSum += w.bikeSpeed;
+                          bikeCnt++;
+                        }
+                        final rSec = _paceToSeconds(w.runPace);
+                        if (w.actRun > 0 && rSec > 0) {
+                          runSecSum += rSec;
+                          runCnt++;
+                        }
+                      }
+                    }
+
+                    final actKm = swimKm + bikeKm + runKm;
+                    final pct = planKm > 0 ? (actKm / planKm * 100) : 0;
+                    final swimPaceStr = swimCnt > 0 ? _secondsToPace(swimSecSum / swimCnt) : '-';
+                    final bikeSpdStr = bikeCnt > 0 ? (bikeSpdSum / bikeCnt).toStringAsFixed(1) : '-';
+                    final runPaceStr = runCnt > 0 ? _secondsToPace(runSecSum / runCnt) : '-';
+
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      elevation: 2,
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text('${b + 1}. Blokk ($startW–$endW. hét)', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                Text('${pct.toStringAsFixed(1)}%', style: TextStyle(fontWeight: FontWeight.bold, color: pct >= 80 ? Colors.green[700] : (pct > 0 ? Colors.orange[800] : Colors.grey))),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text('Terv: ${planKm.toStringAsFixed(1)} km (${(planMin / 60).toStringAsFixed(1)}h)', style: TextStyle(color: Colors.grey[800], fontSize: 13)),
+                                Text('Mért: ${actKm.toStringAsFixed(2)} km', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF1B5E20))),
+                              ],
+                            ),
+                            const Divider(height: 16),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceAround,
+                              children: [
+                                Column(
+                                  children: [
+                                    const Text('🏊 ÚSZÁS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.blue)),
+                                    Text('${swimKm.toStringAsFixed(1)} km', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                                    Text(swimPaceStr, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                                  ],
+                                ),
+                                Column(
+                                  children: [
+                                    const Text('🚴 BRINGA', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.orange)),
+                                    Text('${bikeKm.toStringAsFixed(1)} km', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                                    Text('$bikeSpdStr km/h', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                                  ],
+                                ),
+                                Column(
+                                  children: [
+                                    const Text('🏃 FUTÁS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.green)),
+                                    Text('${runKm.toStringAsFixed(1)} km', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                                    Text(runPaceStr, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _showEditSheet(WorkoutItem w) {
@@ -331,7 +485,16 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
         title: const Text('Ironman 70.3 Fűzfő', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
         backgroundColor: const Color(0xFFD32F2F),
         actions: [
-          IconButton(icon: const Icon(Icons.bar_chart, color: Colors.white), onPressed: _showStats),
+          IconButton(
+            icon: const Icon(Icons.grid_view_rounded, color: Colors.white),
+            tooltip: '5 hetes blokkok',
+            onPressed: _showBlockStats,
+          ),
+          IconButton(
+            icon: const Icon(Icons.bar_chart, color: Colors.white),
+            tooltip: 'Globális statisztika',
+            onPressed: _showStats,
+          ),
         ],
       ),
       body: Column(
@@ -371,11 +534,11 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
 
                 Color cardColor = Colors.white;
                 if (isCompleted) {
-                  cardColor = const Color(0xFFD4EDDA); // Green
+                  cardColor = const Color(0xFFD4EDDA);
                 } else if (isToday) {
-                  cardColor = const Color(0xFFFFCDD2); // Red (Today)
+                  cardColor = const Color(0xFFFFCDD2);
                 } else if (isMissed) {
-                  cardColor = const Color(0xFFFFF3CD); // Yellow (Missed)
+                  cardColor = const Color(0xFFFFF3CD);
                 }
 
                 return Card(

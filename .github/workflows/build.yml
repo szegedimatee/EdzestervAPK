@@ -28,15 +28,42 @@ jobs:
 
       - name: Setup Project and Dependencies
         run: |
-          # Create Android native wrapper
           flutter create --org hu.ironman.edzesterv --project-name edzesterv .
-          
-          # Replace with our custom files
           cp main.dart lib/main.dart
           mkdir -p assets
           cp edzesterv_adatbazis.csv assets/
           cp custom_pubspec.yaml pubspec.yaml
+
+          # Patch android/app/build.gradle for desugaring (required by flutter_local_notifications)
+          python3 -c "
+          with open('android/app/build.gradle', 'r') as f:
+              gradle = f.read()
+
+          if 'coreLibraryDesugaringEnabled' not in gradle:
+              gradle = gradle.replace('compileOptions {', 'compileOptions {\n        coreLibraryDesugaringEnabled true')
+              gradle = gradle.replace('dependencies {', 'dependencies {\n    coreLibraryDesugaring \"com.android.tools:desugar_jdk_libs:2.0.4\"')
           
+          # Ensure minSdk is at least 21
+          gradle = gradle.replace('minSdkVersion flutter.minSdkVersion', 'minSdkVersion 21')
+          
+          with open('android/app/build.gradle', 'w') as f:
+              f.write(gradle)
+          "
+
+          # Patch AndroidManifest.xml to add notification permissions
+          python3 -c "
+          manifest_path = 'android/app/src/main/AndroidManifest.xml'
+          with open(manifest_path, 'r') as f:
+              manifest = f.read()
+          
+          perms = '<uses-permission android:name=\"android.permission.RECEIVE_BOOT_COMPLETED\"/>\n    <uses-permission android:name=\"android.permission.VIBRATE\"/>\n    <uses-permission android:name=\"android.permission.POST_NOTIFICATIONS\"/>\n    <uses-permission android:name=\"android.permission.SCHEDULE_EXACT_ALARM\"/>\n'
+          if 'POST_NOTIFICATIONS' not in manifest:
+              manifest = manifest.replace('<application', perms + '    <application')
+          
+          with open(manifest_path, 'w') as f:
+              f.write(manifest)
+          "
+
           flutter pub get
 
       - name: Build Release APK

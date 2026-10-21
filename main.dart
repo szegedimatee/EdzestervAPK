@@ -3,9 +3,25 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:timezone/data/latest_all.dart' as tz;
+import 'package:timezone/timezone.dart' as tz;
+
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  tz.initializeTimeZones();
+
+  const AndroidInitializationSettings initializationSettingsAndroid =
+      AndroidInitializationSettings('@mipmap/ic_launcher');
+
+  const InitializationSettings initializationSettings = InitializationSettings(
+    android: initializationSettingsAndroid,
+  );
+
+  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+
   runApp(const IronmanApp());
 }
 
@@ -46,10 +62,9 @@ class WorkoutItem {
   int hr;
   String notes;
 
-  // 3. Pont: Okos edzésfunkciók mezői
-  int carbsConsumed; // gramm szénhidrát
-  String stomachFeel; // Gyomorérzet (pl. 5/5 Kiváló, Enyhe puffadás)
-  String gearUsed; // Használt felszerelés megjegyzés (pl. Versenycipő, Neoprén)
+  int carbsConsumed;
+  String stomachFeel;
+  String gearUsed;
 
   WorkoutItem({
     required this.index,
@@ -122,8 +137,8 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
   int todayIndex = 16;
 
   final DateTime startDate = DateTime(2026, 10, 5);
-  final DateTime race1Date = DateTime(2027, 5, 30); // 34. hét vasárnap: 1. Féltáv
-  final DateTime race2Date = DateTime(2027, 9, 5);  // 48. hét vasárnap: Balatonfűzfő
+  final DateTime race1Date = DateTime(2027, 5, 30);
+  final DateTime race2Date = DateTime(2027, 9, 5);
 
   final List<String> blockFocus = [
     "Aerob bázis, úszástechnika & görgő hozzászokás (Térdkímélő sík futások)",
@@ -199,9 +214,104 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
         workouts = items;
         isLoading = false;
       });
+
+      // Automatikusan ellenőrizzük az értesítési beállításokat indításkor
+      _scheduleDailyNotificationIfNeeded();
     } catch (e) {
       setState(() => isLoading = false);
     }
+  }
+
+  Future<void> _scheduleDailyNotificationIfNeeded() async {
+    final prefs = await SharedPreferences.getInstance();
+    final bool enabled = prefs.getBool('notif_enabled') ?? false;
+    if (!enabled) return;
+
+    final int hour = prefs.getInt('notif_hour') ?? 7;
+    final int minute = prefs.getInt('notif_minute') ?? 0;
+
+    WorkoutItem? todayWorkout;
+    if (workouts.length > todayIndex) {
+      todayWorkout = workouts[todayIndex];
+    }
+
+    final String title = 'Ironman 70.3 Mai Edzésed (${todayWorkout?.day ?? ""})';
+    final String body = todayWorkout != null
+        ? '${todayWorkout.sport}: ${todayWorkout.desc}'
+        : 'Ne felejtsd el megtekinteni a mai edzéstervedet!';
+
+    await _scheduleNotification(hour, minute, title, body);
+  }
+
+  Future<void> _scheduleNotification(int hour, int minute, String title, String body) async {
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'daily_workout_channel',
+      'Napi Edzés Emlékeztető',
+      channelDescription: 'Értesítés az aznapi kitűzött edzésmunkáról',
+      importance: Importance.max,
+      priority: Priority.high,
+    );
+
+    const NotificationDetails platformDetails = NotificationDetails(android: androidDetails);
+
+    final tz.TZDateTime now = tz.TZDateTime.now(tz.local);
+    tz.TZDateTime scheduledDate = tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
+
+    if (scheduledDate.isBefore(now)) {
+      scheduledDate = scheduledDate.add(const Duration(days: 1));
+    }
+
+    try {
+      await flutterLocalNotificationsPlugin.zonedSchedule(
+        0,
+        title,
+        body,
+        scheduledDate,
+        platformDetails,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+        matchDateTimeComponents: DateTimeComponents.time,
+      );
+    } catch (_) {
+      // Fallback if exact alarms permission restricted
+      await flutterLocalNotificationsPlugin.show(0, title, body, platformDetails);
+    }
+  }
+
+  Future<void> _showInstantTestNotification() async {
+    WorkoutItem? todayWorkout;
+    if (workouts.length > todayIndex) {
+      todayWorkout = workouts[todayIndex];
+    }
+
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'test_channel',
+      'Teszt Értesítés',
+      channelDescription: 'Azonnali teszt értesítés',
+      importance: Importance.max,
+      priority: Priority.high,
+    );
+
+    const NotificationDetails platformDetails = NotificationDetails(android: androidDetails);
+
+    await flutterLocalNotificationsPlugin.show(
+      99,
+      '🏆 Teszt: Ironman 70.3 (${todayWorkout?.day ?? "Ma"})',
+      'Előírás: ${todayWorkout?.sport ?? "Edzés"} - ${todayWorkout?.desc ?? "Tekintsd meg a mai feladatodat!"}',
+      platformDetails,
+    );
+  }
+
+  void _showNotificationSettings() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => NotificationSettingsSheet(
+        onTestNotification: _showInstantTestNotification,
+        onSettingsChanged: _scheduleDailyNotificationIfNeeded,
+      ),
+    );
   }
 
   Future<void> _saveWorkout(WorkoutItem w) async {
@@ -577,7 +687,6 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                 ],
               ),
               const SizedBox(height: 12),
-              // 3. Pont: Frissítés naplózása
               Row(
                 children: [
                   Expanded(child: TextField(controller: carbsCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Elfogyasztott CH (g)', prefixIcon: Icon(Icons.bolt, color: Colors.amber), border: OutlineInputBorder()))),
@@ -619,9 +728,6 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
     );
   }
 
-  // --------------------------------------------------------------------------
-  // 3. PONT: VERSENY VISSZASZÁMLÁLÓ KÁRTYA
-  // --------------------------------------------------------------------------
   Widget _buildRaceCountdownCard() {
     final now = DateTime.now();
     final daysToRace1 = race1Date.difference(now).inDays;
@@ -656,7 +762,6 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
           const SizedBox(height: 8),
           Row(
             children: [
-              // 1. Féltáv
               Expanded(
                 child: Container(
                   padding: const EdgeInsets.all(8),
@@ -673,7 +778,6 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                 ),
               ),
               const SizedBox(width: 10),
-              // Balatonfűzfő 70.3 Főverseny
               Expanded(
                 child: Container(
                   padding: const EdgeInsets.all(8),
@@ -710,6 +814,11 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
         backgroundColor: const Color(0xFFD32F2F),
         actions: [
           IconButton(
+            icon: const Icon(Icons.notifications_active_rounded, color: Colors.white),
+            tooltip: 'Napi Értesítések',
+            onPressed: _showNotificationSettings,
+          ),
+          IconButton(
             icon: const Icon(Icons.bolt_rounded, color: Colors.amber),
             tooltip: 'Frissítés Kalkulátor',
             onPressed: _showNutritionCalculator,
@@ -738,9 +847,7 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
       ),
       body: Column(
         children: [
-          // 3. PONT: VERSENY VISSZASZÁMLÁLÓ
           _buildRaceCountdownCard(),
-
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
             color: Colors.grey[200],
@@ -894,6 +1001,146 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
 }
 
 // ============================================================================
+// ÉRTESÍTÉSI BEÁLLÍTÁSOK SHEET
+// ============================================================================
+class NotificationSettingsSheet extends StatefulWidget {
+  final VoidCallback onTestNotification;
+  final VoidCallback onSettingsChanged;
+
+  const NotificationSettingsSheet({
+    super.key,
+    required this.onTestNotification,
+    required this.onSettingsChanged,
+  });
+
+  @override
+  State<NotificationSettingsSheet> createState() => _NotificationSettingsSheetState();
+}
+
+class _NotificationSettingsSheetState extends State<NotificationSettingsSheet> {
+  bool isEnabled = false;
+  TimeOfDay reminderTime = const TimeOfDay(hour: 7, minute: 0);
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      isEnabled = prefs.getBool('notif_enabled') ?? false;
+      reminderTime = TimeOfDay(
+        hour: prefs.getInt('notif_hour') ?? 7,
+        minute: prefs.getInt('notif_minute') ?? 0,
+      );
+    });
+  }
+
+  Future<void> _toggleEnabled(bool val) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('notif_enabled', val);
+    setState(() => isEnabled = val);
+    widget.onSettingsChanged();
+  }
+
+  Future<void> _pickTime() async {
+    final picked = await showTimePicker(context: context, initialTime: reminderTime);
+    if (picked != null) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt('notif_hour', picked.hour);
+      await prefs.setInt('notif_minute', picked.minute);
+      setState(() => reminderTime = picked);
+      widget.onSettingsChanged();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom, left: 20, right: 20, top: 20),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.notifications_active, color: Color(0xFFD32F2F), size: 26),
+              const SizedBox(width: 8),
+              const Text('Napi Edzés Emlékeztető', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text('Kapj minden reggel automatikus értesítést a telefonodra az aznapi előírt edzésről és zónákról.', style: TextStyle(fontSize: 12, color: Colors.grey[700])),
+          const Divider(height: 24),
+          SwitchListTile(
+            title: const Text('Napi értesítés bekapcsolása', style: TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: Text(isEnabled ? 'Aktív: Minden nap az adott időpontban' : 'Kikapcsolva'),
+            value: isEnabled,
+            activeColor: const Color(0xFF2E7D32),
+            onChanged: _toggleEnabled,
+          ),
+          ListTile(
+            leading: const Icon(Icons.access_time),
+            title: const Text('Emlékeztető időpontja'),
+            trailing: TextButton(
+              onPressed: isEnabled ? _pickTime : null,
+              child: Text(
+                '${reminderTime.hour.toString().padLeft(2, '0')}:${reminderTime.minute.toString().padLeft(2, '0')}',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: isEnabled ? Colors.blue[800] : Colors.grey),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Card(
+            color: Colors.grey[100],
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  const Icon(Icons.touch_app, color: Colors.deepOrange),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: const [
+                        Text('Teszteld az értesítést most', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                        Text('Kattints az alábbi gombra az azonnali mintáért.', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                      ],
+                    ),
+                  ),
+                  ElevatedButton(
+                    onPressed: () {
+                      widget.onTestNotification();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('🔔 Értesítés elküldve a telefonod értesítési sávjára!')),
+                      );
+                    },
+                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFD32F2F), foregroundColor: Colors.white),
+                    child: const Text('Teszt'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF455A64), foregroundColor: Colors.white),
+              child: const Text('KÉSZ'),
+            ),
+          ),
+          const SizedBox(height: 20),
+        ],
+      ),
+    );
+  }
+}
+
+// ============================================================================
 // 3. PONT: SZÉNHIDRÁT & FRISSÍTÉS KALKULÁTOR
 // ============================================================================
 class NutritionCalculatorSheet extends StatefulWidget {
@@ -904,14 +1151,14 @@ class NutritionCalculatorSheet extends StatefulWidget {
 }
 
 class _NutritionCalculatorSheetState extends State<NutritionCalculatorSheet> {
-  double hours = 2.5; // alapértelmezett 2.5 óra
-  int carbTargetPerHour = 60; // 60g / óra
+  double hours = 2.5;
+  int carbTargetPerHour = 60;
 
   @override
   Widget build(BuildContext context) {
     final totalCarbs = (hours * carbTargetPerHour).round();
-    final totalFluidMl = (hours * 600).round(); // ~600 ml / óra folyadék
-    final gelCount = (totalCarbs / 25).toStringAsFixed(1); // 1 zselé ~25g CH
+    final totalFluidMl = (hours * 600).round();
+    final gelCount = (totalCarbs / 25).toStringAsFixed(1);
 
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom, left: 20, right: 20, top: 20),
@@ -1036,9 +1283,8 @@ class GearTrackerScreen extends StatefulWidget {
 }
 
 class _GearTrackerScreenState extends State<GearTrackerScreen> {
-  double shoeLimit = 800; // km
-  double chainLimit = 3000; // km
-  double tireLimit = 4000; // km
+  double shoeLimit = 800;
+  double chainLimit = 3000;
 
   double customShoeOffset = 0;
   double customChainOffset = 0;
@@ -1098,8 +1344,6 @@ class _GearTrackerScreenState extends State<GearTrackerScreen> {
             const SizedBox(height: 6),
             Text('Kövesd nyomon futócipőid, kerékpárláncod és felszereléseid amortizációját.', style: TextStyle(fontSize: 12, color: Colors.grey[700])),
             const SizedBox(height: 16),
-
-            // 1. Futócipő kártya
             Card(
               elevation: 3,
               child: Padding(
@@ -1147,8 +1391,6 @@ class _GearTrackerScreenState extends State<GearTrackerScreen> {
               ),
             ),
             const SizedBox(height: 14),
-
-            // 2. Kerékpárlánc & Gumik
             Card(
               elevation: 3,
               child: Padding(
@@ -1196,8 +1438,6 @@ class _GearTrackerScreenState extends State<GearTrackerScreen> {
               ),
             ),
             const SizedBox(height: 14),
-
-            // 3. Neoprén & Úszófelszerelés
             Card(
               elevation: 3,
               child: Padding(
@@ -1378,25 +1618,6 @@ class _ChartsScreenState extends State<ChartsScreen> with SingleTickerProviderSt
               ),
             ),
           ),
-          const SizedBox(height: 16),
-          Card(
-            color: Colors.blueGrey[50],
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Row(
-                children: [
-                  const Icon(Icons.info_outline, color: Colors.blueGrey),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'Tipp: A 4., 8., 12., 16., 20., 24., 28., 35., 39., 43. hetek a regenerációs hetek a periodizációban, ahol a volumen visszaesik a szuperkompenzációhoz.',
-                      style: TextStyle(fontSize: 12, color: Colors.blueGrey[900]),
-                    ),
-                  )
-                ],
-              ),
-            ),
-          )
         ],
       ),
     );
@@ -1633,30 +1854,6 @@ class _ChartsScreenState extends State<ChartsScreen> with SingleTickerProviderSt
                   ],
                 ),
               ),
-            ),
-            const SizedBox(height: 16),
-            const Text('Rögzített edzések részletei:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-            const SizedBox(height: 8),
-            ListView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: points.length,
-              itemBuilder: (ctx, i) {
-                final p = points[i];
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 6),
-                  color: Colors.grey[50],
-                  child: ListTile(
-                    dense: true,
-                    leading: CircleAvatar(
-                      backgroundColor: _trendSport == 0 ? Colors.green[100] : Colors.orange[100],
-                      child: Icon(_trendSport == 0 ? Icons.directions_run : Icons.directions_bike, color: _trendSport == 0 ? Colors.green[900] : Colors.orange[900], size: 18),
-                    ),
-                    title: Text(p['label'], style: const TextStyle(fontWeight: FontWeight.bold)),
-                    trailing: Text(p['detail'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                  ),
-                );
-              },
             ),
           ],
         ],

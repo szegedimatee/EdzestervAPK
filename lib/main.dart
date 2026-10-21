@@ -6,6 +6,7 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
+import 'strings.dart';
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
 
@@ -31,7 +32,7 @@ class IronmanApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Ironman 70.3 Napló',
+      title: S.appTitle,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFD32F2F)),
@@ -89,6 +90,9 @@ class WorkoutItem {
     this.gearUsed = '',
   });
 
+  // Week + day is unique in the CSV, so reordering rows doesn't mix up saved data
+  String get storageKey => 'w_${week}_$day';
+
   Map<String, dynamic> toMap() {
     return {
       'actSwim': actSwim,
@@ -139,21 +143,8 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
   final DateTime startDate = DateTime(2026, 10, 5);
   DateTime race1Date = DateTime(2027, 5, 30);
   DateTime race2Date = DateTime(2027, 9, 5);
-  String race1Name = '1. FÉLTÁV';
-  String race2Name = 'FŰZFŐ 70.3';
-
-  final List<String> blockFocus = [
-    "Aerob bázis, úszástechnika & görgő hozzászokás (Térdkímélő sík futások)",
-    "Állóképesség növelése, SweetSpot blokkok & törzserő",
-    "Téli volumenépítés, növekvő görgő- és futótávok",
-    "Téli csúcs + Thaiföldi 2 hetes edzőtábor jellegű blokk (úszás & futás)",
-    "Tavaszi nyitás: kinti 70-75km bringák & első téglaedzések",
-    "1. Féltáv specifikus építés: 80-90km bringák & hosszú téglák",
-    "Tapering + 1. FÉLTÁV VERSENY (Május vége/Júni eleje - Barátkozós!) + Regeneráció",
-    "Fűzfőre hangolás 1.: Emelt intenzitás (Z3/SweetSpot versenytempó blokkok)",
-    "Fűzfőre hangolás 2.: Csúcsterhelés & versenyszimulációs erős téglák (95km / 72km)",
-    "Tapering + 2. FÉLTÁV VERSENY: BALATONFŰZFŐ (Szept. eleje - MEGNYOMÓS!) + Levezetés"
-  ];
+  String race1Name = S.race1DefaultName;
+  String race2Name = S.race2DefaultName;
 
   @override
   void initState() {
@@ -164,7 +155,10 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
 
   void _calculateToday() {
     final now = DateTime.now();
-    final diff = now.difference(startDate).inDays;
+    // Calendar-day difference in UTC: DST changes don't shift the day boundary
+    final diff = DateTime.utc(now.year, now.month, now.day)
+        .difference(DateTime.utc(startDate.year, startDate.month, startDate.day))
+        .inDays;
     todayIndex = diff.clamp(0, 349);
     currentWeek = (todayIndex ~/ 7) + 1;
     selectedWeek = currentWeek;
@@ -206,14 +200,23 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
 
       final prefs = await SharedPreferences.getInstance();
       for (var w in items) {
-        final saved = prefs.getString('w_${w.index}');
+        var saved = prefs.getString(w.storageKey);
+        if (saved == null) {
+          // Migrate the old index-based key (the CSV order was still the same back then)
+          saved = prefs.getString('w_${w.index}');
+          if (saved != null) await prefs.setString(w.storageKey, saved);
+        }
         if (saved != null) {
-          w.updateFromMap(jsonDecode(saved));
+          try {
+            w.updateFromMap(jsonDecode(saved) as Map<String, dynamic>);
+          } catch (_) {
+            // one corrupt entry must not make the whole log unusable
+          }
         }
       }
 
-      race1Name = prefs.getString('race1_name') ?? '1. FÉLTÁV';
-      race2Name = prefs.getString('race2_name') ?? 'FŰZFŐ 70.3';
+      race1Name = prefs.getString('race1_name') ?? S.race1DefaultName;
+      race2Name = prefs.getString('race2_name') ?? S.race2DefaultName;
       final r1Str = prefs.getString('race1_date');
       if (r1Str != null) {
         try { race1Date = DateTime.parse(r1Str); } catch (_) {}
@@ -223,15 +226,20 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
         try { race2Date = DateTime.parse(r2Str); } catch (_) {}
       }
 
+      if (!mounted) return;
       setState(() {
         workouts = items;
         isLoading = false;
       });
 
-      // Automatikusan ellenőrizzük az értesítési beállításokat indításkor
+      // Check notification settings automatically on startup
       _scheduleDailyNotificationIfNeeded();
     } catch (e) {
+      if (!mounted) return;
       setState(() => isLoading = false);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(S.loadFailed(e))));
+      });
     }
   }
 
@@ -248,10 +256,10 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
       todayWorkout = workouts[todayIndex];
     }
 
-    final String title = 'Ironman 70.3 Mai Edzésed (${todayWorkout?.day ?? ""})';
+    final String title = S.notifTodayTitle(todayWorkout?.day ?? '');
     final String body = todayWorkout != null
         ? '${todayWorkout.sport}: ${todayWorkout.desc}'
-        : 'Ne felejtsd el megtekinteni a mai edzéstervedet!';
+        : S.notifTodayFallback;
 
     await _scheduleNotification(hour, minute, title, body);
   }
@@ -259,8 +267,8 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
   Future<void> _scheduleNotification(int hour, int minute, String title, String body) async {
     const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       'daily_workout_channel',
-      'Napi Edzés Emlékeztető',
-      channelDescription: 'Értesítés az aznapi kitűzött edzésmunkáról',
+      S.dailyChannelName,
+      channelDescription: S.dailyChannelDesc,
       importance: Importance.max,
       priority: Priority.high,
     );
@@ -299,8 +307,8 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
 
     const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       'test_channel',
-      'Teszt Értesítés',
-      channelDescription: 'Azonnali teszt értesítés',
+      S.testChannelName,
+      channelDescription: S.testChannelDesc,
       importance: Importance.max,
       priority: Priority.high,
     );
@@ -309,8 +317,8 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
 
     await flutterLocalNotificationsPlugin.show(
       99,
-      '🏆 Teszt: Ironman 70.3 (${todayWorkout?.day ?? "Ma"})',
-      'Előírás: ${todayWorkout?.sport ?? "Edzés"} - ${todayWorkout?.desc ?? "Tekintsd meg a mai feladatodat!"}',
+      S.testNotifTitle(todayWorkout?.day ?? S.today),
+      S.testNotifBody(todayWorkout?.sport ?? S.workout, todayWorkout?.desc ?? S.checkTodayTask),
       platformDetails,
     );
   }
@@ -329,7 +337,8 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
 
   Future<void> _saveWorkout(WorkoutItem w) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('w_${w.index}', jsonEncode(w.toMap()));
+    await prefs.setString(w.storageKey, jsonEncode(w.toMap()));
+    if (!mounted) return;
     setState(() {});
   }
 
@@ -397,7 +406,7 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
             children: [
               Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[400], borderRadius: BorderRadius.circular(2))),
               const SizedBox(height: 12),
-              const Text('5 Hetes Periodizációs Blokkok', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const Text(S.periodBlocksTitle, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 10),
               Expanded(
                 child: ListView.builder(
@@ -505,7 +514,7 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Text('${b + 1}. Blokk ($startW–$endW. hét)', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                Text(S.blockRange(b + 1, startW, endW), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                                   decoration: BoxDecoration(
@@ -520,24 +529,24 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                               ],
                             ),
                             const SizedBox(height: 4),
-                            Text(blockFocus[b], style: TextStyle(fontSize: 12, color: Colors.blueGrey[800], fontStyle: FontStyle.italic)),
+                            Text(S.blockFocus[b], style: TextStyle(fontSize: 12, color: Colors.blueGrey[800], fontStyle: FontStyle.italic)),
                             const Divider(height: 16),
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Text('Terv: ${planKm.toStringAsFixed(1)} km (${(planMin / 60).toStringAsFixed(1)} óra)', style: TextStyle(color: Colors.grey[800], fontSize: 13)),
-                                Text('Mért: ${actKm.toStringAsFixed(2)} km', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF1B5E20))),
+                                Text(S.planKmHours(planKm.toStringAsFixed(1), (planMin / 60).toStringAsFixed(1)), style: TextStyle(color: Colors.grey[800], fontSize: 13)),
+                                Text(S.measuredKm(actKm.toStringAsFixed(2)), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF1B5E20))),
                               ],
                             ),
                             const SizedBox(height: 4),
-                            Text('❤️ Blokk átlagpulzus: $avgBlockHr bpm', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFFC62828))),
+                            Text(S.blockAvgHr(avgBlockHr), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFFC62828))),
                             const Divider(height: 16),
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceAround,
                               children: [
                                 Column(
                                   children: [
-                                    const Text('🏊 ÚSZÁS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.blue)),
+                                    const Text(S.swimUpper, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.blue)),
                                     const SizedBox(height: 2),
                                     Text('${swimKm.toStringAsFixed(1)} km', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                                     Text('⏱ $swimPaceStr', style: const TextStyle(fontSize: 11, color: Colors.black87)),
@@ -546,7 +555,7 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                                 ),
                                 Column(
                                   children: [
-                                    const Text('🚴 BRINGA', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.orange)),
+                                    const Text(S.bikeUpper, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.orange)),
                                     const SizedBox(height: 2),
                                     Text('${bikeKm.toStringAsFixed(1)} km', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                                     Text('⚡ $bikeSpdStr', style: const TextStyle(fontSize: 11, color: Colors.black87)),
@@ -555,7 +564,7 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                                 ),
                                 Column(
                                   children: [
-                                    const Text('🏃 FUTÁS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.green)),
+                                    const Text(S.runUpper, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.green)),
                                     const SizedBox(height: 2),
                                     Text('${runKm.toStringAsFixed(1)} km', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                                     Text('⏱ $runPaceStr', style: const TextStyle(fontSize: 11, color: Colors.black87)),
@@ -607,34 +616,38 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Globális Összesítő', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text(S.globalSummary, style: TextStyle(fontWeight: FontWeight.bold)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('• Összes tervezett idő: ${planMin.toInt()} perc (${(planMin / 60).toStringAsFixed(1)} óra)'),
-            Text('• Átlagos heti edzésidő: ${(planMin / 60 / 50).toStringAsFixed(1)} óra / hét'),
-            Text('• Összes tervezett táv: ${planKm.toStringAsFixed(1)} km'),
+            Text(S.totalPlannedTime(planMin.toInt(), (planMin / 60).toStringAsFixed(1))),
+            Text(S.avgWeeklyTime((planMin / 60 / 50).toStringAsFixed(1))),
+            Text(S.totalPlannedDist(planKm.toStringAsFixed(1))),
             const Divider(height: 20),
-            Text('• Összes teljesített táv: ${actKm.toStringAsFixed(2)} km (${pct.toStringAsFixed(1)}%)', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1B5E20))),
+            Text(S.totalDoneDist(actKm.toStringAsFixed(2), pct.toStringAsFixed(1)), style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1B5E20))),
             const SizedBox(height: 4),
-            Text('  - 🏊 Úszás: ${swimKm.toStringAsFixed(2)} km'),
-            Text('  - 🚴 Bringa / Görgő: ${bikeKm.toStringAsFixed(2)} km'),
-            Text('  - 🏃 Futás: ${runKm.toStringAsFixed(2)} km'),
+            Text(S.swimLine(swimKm.toStringAsFixed(2))),
+            Text(S.bikeLine(bikeKm.toStringAsFixed(2))),
+            Text(S.runLine(runKm.toStringAsFixed(2))),
             const Divider(height: 20),
-            Text('❤️ Átlagos mért pulzus: $avgHr bpm ($hrCnt edzés alapján)', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFC62828))),
+            Text(S.avgHrLine(avgHr, hrCnt), style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFC62828))),
           ],
         ),
-        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Rendben'))],
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text(S.ok))],
       ),
     );
   }
 
   void _showEditSheet(WorkoutItem w) {
     final sport = w.sport.toLowerCase();
-    final isSwim = sport.contains('úszás') || sport.contains('tégla');
-    final isBike = sport.contains('bringa') || sport.contains('görgő') || sport.contains('kerékpár') || sport.contains('tégla');
-    final isRun = sport.contains('futás') || sport.contains('tégla');
+    final isSwim = sport.contains(PlanTerms.swim) || sport.contains(PlanTerms.brick);
+    final isBike = sport.contains(PlanTerms.bike) || sport.contains(PlanTerms.trainer) || sport.contains(PlanTerms.cycling) || sport.contains(PlanTerms.brick);
+    final isRun = sport.contains(PlanTerms.run) || sport.contains(PlanTerms.brick);
+    // Race, rescheduling etc.: no per-sport breakdown, only total distance (rest day: nothing)
+    final isOther = !(isSwim || isBike || isRun) && !sport.contains(PlanTerms.restLower);
+    final totalDistCtrl = TextEditingController(text: w.actTotal > 0 ? w.actTotal.toString() : '');
+    String? error;
 
     final swimDistCtrl = TextEditingController(text: w.actSwim > 0 ? w.actSwim.toString() : '');
     final swimPaceCtrl = TextEditingController(text: w.swimPace);
@@ -651,23 +664,23 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => Padding(
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setSheet) => Padding(
         padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom, left: 20, right: 20, top: 20),
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('${w.week}. hét, ${w.day} - ${w.sport}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              Text(S.workoutHeader(w.week, w.day, w.sport), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 5),
               Text(w.desc, style: TextStyle(color: Colors.grey[700], fontSize: 13, fontStyle: FontStyle.italic)),
               const Divider(height: 25),
               if (isSwim) ...[
                 Row(
                   children: [
-                    Expanded(child: TextField(controller: swimDistCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Úszás (km)', border: OutlineInputBorder()))),
+                    Expanded(child: TextField(controller: swimDistCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: S.swimKmLabel, border: OutlineInputBorder()))),
                     const SizedBox(width: 10),
-                    Expanded(child: TextField(controller: swimPaceCtrl, decoration: const InputDecoration(labelText: 'Tempó (mm:ss)', border: OutlineInputBorder()))),
+                    Expanded(child: TextField(controller: swimPaceCtrl, decoration: const InputDecoration(labelText: S.paceLabel, border: OutlineInputBorder()))),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -675,9 +688,9 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
               if (isBike) ...[
                 Row(
                   children: [
-                    Expanded(child: TextField(controller: bikeDistCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Kerékpár (km)', border: OutlineInputBorder()))),
+                    Expanded(child: TextField(controller: bikeDistCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: S.bikeKmLabel, border: OutlineInputBorder()))),
                     const SizedBox(width: 10),
-                    Expanded(child: TextField(controller: bikeSpeedCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Sebesség (km/h)', border: OutlineInputBorder()))),
+                    Expanded(child: TextField(controller: bikeSpeedCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: S.speedLabel, border: OutlineInputBorder()))),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -685,28 +698,36 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
               if (isRun) ...[
                 Row(
                   children: [
-                    Expanded(child: TextField(controller: runDistCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Futás (km)', border: OutlineInputBorder()))),
+                    Expanded(child: TextField(controller: runDistCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: S.runKmLabel, border: OutlineInputBorder()))),
                     const SizedBox(width: 10),
-                    Expanded(child: TextField(controller: runPaceCtrl, decoration: const InputDecoration(labelText: 'Tempó (mm:ss)', border: OutlineInputBorder()))),
+                    Expanded(child: TextField(controller: runPaceCtrl, decoration: const InputDecoration(labelText: S.paceLabel, border: OutlineInputBorder()))),
                   ],
                 ),
                 const SizedBox(height: 12),
               ],
+              if (isOther) ...[
+                TextField(controller: totalDistCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: S.doneDistLabel, border: OutlineInputBorder())),
+                const SizedBox(height: 12),
+              ],
               Row(
                 children: [
-                  Expanded(child: TextField(controller: hrCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Átlagpulzus (bpm)', border: OutlineInputBorder()))),
+                  Expanded(child: TextField(controller: hrCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: S.avgHrLabel, border: OutlineInputBorder()))),
                   const SizedBox(width: 10),
-                  Expanded(child: TextField(controller: notesCtrl, decoration: const InputDecoration(labelText: 'RPE / Megjegyzés', border: OutlineInputBorder()))),
+                  Expanded(child: TextField(controller: notesCtrl, decoration: const InputDecoration(labelText: S.rpeNotesLabel, border: OutlineInputBorder()))),
                 ],
               ),
               const SizedBox(height: 12),
               Row(
                 children: [
-                  Expanded(child: TextField(controller: carbsCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Elfogyasztott CH (g)', prefixIcon: Icon(Icons.bolt, color: Colors.amber), border: OutlineInputBorder()))),
+                  Expanded(child: TextField(controller: carbsCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: S.carbsLabel, prefixIcon: Icon(Icons.bolt, color: Colors.amber), border: OutlineInputBorder()))),
                   const SizedBox(width: 10),
-                  Expanded(child: TextField(controller: stomachCtrl, decoration: const InputDecoration(labelText: 'Gyomorérzet (pl. 5/5 jó)', prefixIcon: Icon(Icons.sentiment_satisfied_alt), border: OutlineInputBorder()))),
+                  Expanded(child: TextField(controller: stomachCtrl, decoration: const InputDecoration(labelText: S.stomachLabel, prefixIcon: Icon(Icons.sentiment_satisfied_alt), border: OutlineInputBorder()))),
                 ],
               ),
+              if (error != null) ...[
+                const SizedBox(height: 10),
+                Text(error!, style: const TextStyle(color: Colors.red)),
+              ],
               const SizedBox(height: 20),
               SizedBox(
                 width: double.infinity,
@@ -714,16 +735,34 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                 child: ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2E7D32), foregroundColor: Colors.white),
                   icon: const Icon(Icons.check),
-                  label: const Text('MENTÉS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  label: const Text(S.saveUpper, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                   onPressed: () {
-                    w.actSwim = double.tryParse(swimDistCtrl.text.replaceAll(',', '.')) ?? 0.0;
-                    w.swimPace = swimPaceCtrl.text;
-                    w.actBike = double.tryParse(bikeDistCtrl.text.replaceAll(',', '.')) ?? 0.0;
-                    w.bikeSpeed = double.tryParse(bikeSpeedCtrl.text.replaceAll(',', '.')) ?? 0.0;
-                    w.actRun = double.tryParse(runDistCtrl.text.replaceAll(',', '.')) ?? 0.0;
-                    w.runPace = runPaceCtrl.text;
-                    w.actTotal = double.parse((w.actSwim + w.actBike + w.actRun).toStringAsFixed(2));
-                    w.hr = int.tryParse(hrCtrl.text) ?? 0;
+                    double dist(TextEditingController c) => double.tryParse(c.text.trim().replaceAll(',', '.')) ?? (c.text.trim().isEmpty ? 0.0 : -1);
+                    final paceRe = RegExp(r'^\d{1,2}:\d{2}(:\d{2})?$');
+                    bool paceOk(String t) => t.trim().isEmpty || paceRe.hasMatch(t.trim());
+
+                    final swim = isSwim ? dist(swimDistCtrl) : 0.0;
+                    final bike = isBike ? dist(bikeDistCtrl) : 0.0;
+                    final speed = isBike ? dist(bikeSpeedCtrl) : 0.0;
+                    final run = isRun ? dist(runDistCtrl) : 0.0;
+                    final other = isOther ? dist(totalDistCtrl) : 0.0;
+                    final hr = hrCtrl.text.trim().isEmpty ? 0 : (int.tryParse(hrCtrl.text.trim()) ?? -1);
+
+                    if ([swim, bike, speed, run, other].any((v) => v < 0) ||
+                        hr < 0 || hr > 250 ||
+                        !paceOk(swimPaceCtrl.text) || !paceOk(runPaceCtrl.text)) {
+                      setSheet(() => error = S.invalidInput);
+                      return;
+                    }
+
+                    w.actSwim = swim;
+                    w.swimPace = isSwim ? swimPaceCtrl.text.trim() : '';
+                    w.actBike = bike;
+                    w.bikeSpeed = speed;
+                    w.actRun = run;
+                    w.runPace = isRun ? runPaceCtrl.text.trim() : '';
+                    w.actTotal = isOther ? other : double.parse((swim + bike + run).toStringAsFixed(2));
+                    w.hr = hr;
                     w.notes = notesCtrl.text;
                     w.carbsConsumed = int.tryParse(carbsCtrl.text) ?? 0;
                     w.stomachFeel = stomachCtrl.text;
@@ -737,7 +776,7 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
             ],
           ),
         ),
-      ),
+      )),
     );
   }
 
@@ -754,7 +793,7 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
             children: [
               const Icon(Icons.edit_calendar, color: Color(0xFFD32F2F)),
               const SizedBox(width: 8),
-              Text('$raceNum. Verseny Beállítása', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              Text(S.raceSettings(raceNum), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             ],
           ),
           content: Column(
@@ -764,13 +803,13 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
               TextField(
                 controller: nameCtrl,
                 decoration: const InputDecoration(
-                  labelText: 'Verseny megnevezése',
+                  labelText: S.raceName,
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.flag),
                 ),
               ),
               const SizedBox(height: 16),
-              const Text('Választott versenynap:', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+              const Text(S.chosenRaceDay, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
               const SizedBox(height: 6),
               OutlinedButton.icon(
                 style: OutlinedButton.styleFrom(
@@ -779,7 +818,7 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                 ),
                 icon: const Icon(Icons.calendar_today, color: Color(0xFFD32F2F)),
                 label: Text(
-                  '${tempDate.year}. ${tempDate.month.toString().padLeft(2, '0')}. ${tempDate.day.toString().padLeft(2, '0')}.',
+                  S.dateLong(tempDate),
                   style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
                 ),
                 onPressed: () async {
@@ -799,21 +838,21 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('Mégse'),
+              child: const Text(S.cancel),
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2E7D32), foregroundColor: Colors.white),
               onPressed: () async {
                 if (raceNum == 1) {
                   setState(() {
-                    race1Name = nameCtrl.text.trim().isEmpty ? '1. FÉLTÁV' : nameCtrl.text.trim();
+                    race1Name = nameCtrl.text.trim().isEmpty ? S.race1DefaultName : nameCtrl.text.trim();
                     race1Date = tempDate;
                   });
                   await prefs.setString('race1_name', race1Name);
                   await prefs.setString('race1_date', race1Date.toIso8601String());
                 } else {
                   setState(() {
-                    race2Name = nameCtrl.text.trim().isEmpty ? 'FŰZFŐ 70.3' : nameCtrl.text.trim();
+                    race2Name = nameCtrl.text.trim().isEmpty ? S.race2DefaultName : nameCtrl.text.trim();
                     race2Date = tempDate;
                   });
                   await prefs.setString('race2_name', race2Name);
@@ -821,7 +860,7 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                 }
                 Navigator.pop(ctx);
               },
-              child: const Text('Mentés'),
+              child: const Text(S.save),
             ),
           ],
         ),
@@ -837,8 +876,8 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
     final daysToRace2 = race2Date.difference(now).inDays;
     final weeksToRace2 = (daysToRace2 / 7).ceil();
 
-    final date1Str = '${race1Date.month}.${race1Date.day}.';
-    final date2Str = '${race2Date.month}.${race2Date.day}.';
+    final date1Str = S.dateShort(race1Date);
+    final date2Str = S.dateShort(race2Date);
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -858,9 +897,9 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
             children: [
               const Icon(Icons.flag_rounded, color: Colors.amber, size: 20),
               const SizedBox(width: 6),
-              const Text('VERSENYEK VISSZASZÁMLÁLÓJA', style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+              const Text(S.raceCountdown, style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
               const Spacer(),
-              Text('Koppints a módosításhoz ✎', style: TextStyle(color: Colors.amber[200], fontSize: 10, fontStyle: FontStyle.italic)),
+              Text(S.tapToEdit, style: TextStyle(color: Colors.amber[200], fontSize: 10, fontStyle: FontStyle.italic)),
             ],
           ),
           const SizedBox(height: 8),
@@ -885,8 +924,8 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                             ],
                           ),
                           const SizedBox(height: 3),
-                          Text('$daysToRace1 nap', style: const TextStyle(color: Colors.amber, fontSize: 18, fontWeight: FontWeight.bold)),
-                          Text('$weeksToRace1 hét hátralévő idő', style: const TextStyle(color: Colors.white70, fontSize: 10)),
+                          Text(S.daysLeft(daysToRace1), style: const TextStyle(color: Colors.amber, fontSize: 18, fontWeight: FontWeight.bold)),
+                          Text(S.weeksLeft(weeksToRace1), style: const TextStyle(color: Colors.white70, fontSize: 10)),
                         ],
                       ),
                     ),
@@ -913,8 +952,8 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                             ],
                           ),
                           const SizedBox(height: 3),
-                          Text('$daysToRace2 nap', style: const TextStyle(color: Colors.redAccent, fontSize: 18, fontWeight: FontWeight.bold)),
-                          Text('$weeksToRace2 hét hátralévő idő', style: const TextStyle(color: Colors.white70, fontSize: 10)),
+                          Text(S.daysLeft(daysToRace2), style: const TextStyle(color: Colors.redAccent, fontSize: 18, fontWeight: FontWeight.bold)),
+                          Text(S.weeksLeft(weeksToRace2), style: const TextStyle(color: Colors.white70, fontSize: 10)),
                         ],
                       ),
                     ),
@@ -938,37 +977,37 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Ironman 70.3 Fűzfő', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+        title: const Text(S.homeTitle, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
         backgroundColor: const Color(0xFFD32F2F),
         actions: [
           IconButton(
             icon: const Icon(Icons.notifications_active_rounded, color: Colors.white),
-            tooltip: 'Napi Értesítések',
+            tooltip: S.dailyNotifications,
             onPressed: _showNotificationSettings,
           ),
           IconButton(
             icon: const Icon(Icons.bolt_rounded, color: Colors.amber),
-            tooltip: 'Frissítés Kalkulátor',
+            tooltip: S.fuelCalculator,
             onPressed: _showNutritionCalculator,
           ),
           IconButton(
             icon: const Icon(Icons.construction_rounded, color: Colors.white),
-            tooltip: 'Felszerelés & Eszköztár',
+            tooltip: S.gearTitle,
             onPressed: _showGearTracker,
           ),
           IconButton(
             icon: const Icon(Icons.show_chart_rounded, color: Colors.white),
-            tooltip: 'Grafikonok és Diagramok',
+            tooltip: S.chartsMenu,
             onPressed: _showChartsScreen,
           ),
           IconButton(
             icon: const Icon(Icons.grid_view_rounded, color: Colors.white),
-            tooltip: '5 hetes blokkok',
+            tooltip: S.fiveWeekBlocks,
             onPressed: _showBlockStats,
           ),
           IconButton(
             icon: const Icon(Icons.bar_chart, color: Colors.white),
-            tooltip: 'Globális statisztika',
+            tooltip: S.globalStats,
             onPressed: _showStats,
           ),
         ],
@@ -985,7 +1024,7 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                   icon: const Icon(Icons.arrow_back_ios, size: 18),
                   onPressed: selectedWeek > 1 ? () => setState(() => selectedWeek--) : null,
                 ),
-                Text('$selectedWeek. Hét', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                Text(S.weekTitle(selectedWeek), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                 IconButton(
                   icon: const Icon(Icons.arrow_forward_ios, size: 18),
                   onPressed: selectedWeek < 50 ? () => setState(() => selectedWeek++) : null,
@@ -994,7 +1033,7 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF455A64), foregroundColor: Colors.white),
                   icon: const Icon(Icons.today, size: 16),
-                  label: const Text('MAI HÉT'),
+                  label: const Text(S.thisWeekUpper),
                   onPressed: () => setState(() => selectedWeek = currentWeek),
                 )
               ],
@@ -1005,7 +1044,7 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
               itemCount: weekWorkouts.length,
               itemBuilder: (ctx, i) {
                 final w = weekWorkouts[i];
-                final isCompleted = w.actTotal > 0 || w.sport == 'Pihenő';
+                final isCompleted = w.actTotal > 0 || w.sport == PlanTerms.rest;
                 final isToday = w.index == todayIndex;
                 final isMissed = !isCompleted && w.index < todayIndex;
 
@@ -1032,7 +1071,7 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                             decoration: BoxDecoration(color: Colors.red[800], borderRadius: BorderRadius.circular(10)),
-                            child: const Text('MAI NAP', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                            child: const Text(S.todayUpper, style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
                           )
                         else if (isCompleted)
                           const Icon(Icons.check_circle, color: Color(0xFF2E7D32), size: 20),
@@ -1044,7 +1083,7 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                         const SizedBox(height: 4),
                         Text(w.desc, style: const TextStyle(fontSize: 13)),
                         const SizedBox(height: 6),
-                        Text('Terv: ${w.planDist} km (${w.planTime.toInt()}p) [${w.zone}]', style: TextStyle(color: Colors.grey[800], fontSize: 12, fontWeight: FontWeight.w600)),
+                        Text(S.planLine(w.planDist, w.planTime.toInt(), w.zone), style: TextStyle(color: Colors.grey[800], fontSize: 12, fontWeight: FontWeight.w600)),
                         if (w.actTotal > 0 || w.hr > 0 || w.notes.isNotEmpty || w.carbsConsumed > 0) ...[
                           const SizedBox(height: 6),
                           Container(
@@ -1055,7 +1094,7 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                               children: [
                                 Row(
                                   children: [
-                                    Text('Mért össztáv: ${w.actTotal} km', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1B5E20), fontSize: 13)),
+                                    Text(S.measuredTotal(w.actTotal), style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1B5E20), fontSize: 13)),
                                     const Spacer(),
                                     if (w.hr > 0)
                                       Text('❤️ ${w.hr} bpm', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFC62828), fontSize: 13)),
@@ -1077,7 +1116,7 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                                   Row(
                                     children: [
                                       if (w.carbsConsumed > 0)
-                                        Text('⚡ Frissítés: ${w.carbsConsumed}g CH ', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.deepOrange)),
+                                        Text(S.fuelLine(w.carbsConsumed), style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.deepOrange)),
                                       if (w.stomachFeel.isNotEmpty)
                                         Text('(${w.stomachFeel})', style: TextStyle(fontSize: 11, color: Colors.grey[800])),
                                     ],
@@ -1105,10 +1144,10 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                _buildLegend(const Color(0xFF2E7D32), 'Kész'),
-                _buildLegend(const Color(0xFFD32F2F), 'Ma'),
-                _buildLegend(const Color(0xFFF57F17), 'Kihagyott'),
-                _buildLegend(Colors.grey, 'Jövőbeli'),
+                _buildLegend(const Color(0xFF2E7D32), S.statusDone),
+                _buildLegend(const Color(0xFFD32F2F), S.today),
+                _buildLegend(const Color(0xFFF57F17), S.statusSkipped),
+                _buildLegend(Colors.grey, S.statusFuture),
               ],
             ),
           )
@@ -1129,7 +1168,7 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
 }
 
 // ============================================================================
-// ÉRTESÍTÉSI BEÁLLÍTÁSOK SHEET
+// NOTIFICATION SETTINGS SHEET
 // ============================================================================
 class NotificationSettingsSheet extends StatefulWidget {
   final VoidCallback onTestNotification;
@@ -1196,22 +1235,22 @@ class _NotificationSettingsSheetState extends State<NotificationSettingsSheet> {
             children: [
               const Icon(Icons.notifications_active, color: Color(0xFFD32F2F), size: 26),
               const SizedBox(width: 8),
-              const Text('Napi Edzés Emlékeztető', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const Text(S.notifSheetTitle, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             ],
           ),
           const SizedBox(height: 6),
-          Text('Kapj minden reggel automatikus értesítést a telefonodra az aznapi előírt edzésről és zónákról.', style: TextStyle(fontSize: 12, color: Colors.grey[700])),
+          Text(S.notifSheetDesc, style: TextStyle(fontSize: 12, color: Colors.grey[700])),
           const Divider(height: 24),
           SwitchListTile(
-            title: const Text('Napi értesítés bekapcsolása', style: TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: Text(isEnabled ? 'Aktív: Minden nap az adott időpontban' : 'Kikapcsolva'),
+            title: const Text(S.enableDailyNotif, style: TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: Text(isEnabled ? S.notifActive : S.notifOff),
             value: isEnabled,
             activeColor: const Color(0xFF2E7D32),
             onChanged: _toggleEnabled,
           ),
           ListTile(
             leading: const Icon(Icons.access_time),
-            title: const Text('Emlékeztető időpontja'),
+            title: const Text(S.reminderTime),
             trailing: TextButton(
               onPressed: isEnabled ? _pickTime : null,
               child: Text(
@@ -1233,8 +1272,8 @@ class _NotificationSettingsSheetState extends State<NotificationSettingsSheet> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: const [
-                        Text('Teszteld az értesítést most', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                        Text('Kattints az alábbi gombra az azonnali mintáért.', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                        Text(S.testNotifNow, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                        Text(S.testNotifHint, style: TextStyle(fontSize: 11, color: Colors.grey)),
                       ],
                     ),
                   ),
@@ -1242,11 +1281,11 @@ class _NotificationSettingsSheetState extends State<NotificationSettingsSheet> {
                     onPressed: () {
                       widget.onTestNotification();
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('🔔 Értesítés elküldve a telefonod értesítési sávjára!')),
+                        const SnackBar(content: Text(S.notifSent)),
                       );
                     },
                     style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFD32F2F), foregroundColor: Colors.white),
-                    child: const Text('Teszt'),
+                    child: const Text(S.test),
                   ),
                 ],
               ),
@@ -1258,7 +1297,7 @@ class _NotificationSettingsSheetState extends State<NotificationSettingsSheet> {
             child: ElevatedButton(
               onPressed: () => Navigator.pop(context),
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF455A64), foregroundColor: Colors.white),
-              child: const Text('KÉSZ'),
+              child: const Text(S.doneUpper),
             ),
           ),
           const SizedBox(height: 20),
@@ -1269,7 +1308,7 @@ class _NotificationSettingsSheetState extends State<NotificationSettingsSheet> {
 }
 
 // ============================================================================
-// 3. PONT: SZÉNHIDRÁT & FRISSÍTÉS KALKULÁTOR
+// ITEM 3: CARBOHYDRATE & FUELING CALCULATOR
 // ============================================================================
 class NutritionCalculatorSheet extends StatefulWidget {
   const NutritionCalculatorSheet({super.key});
@@ -1299,17 +1338,17 @@ class _NutritionCalculatorSheetState extends State<NutritionCalculatorSheet> {
               children: [
                 const Icon(Icons.bolt, color: Colors.amber, size: 28),
                 const SizedBox(width: 8),
-                const Text('Szénhidrát & Frissítés Tervező', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const Text(S.fuelTitle, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               ],
             ),
             const SizedBox(height: 6),
-            Text('Kalkuláld ki a szükséges energiát és folyadékot a hosszú edzésekhez és versenyekhez.', style: TextStyle(fontSize: 12, color: Colors.grey[700])),
+            Text(S.fuelDesc, style: TextStyle(fontSize: 12, color: Colors.grey[700])),
             const Divider(height: 24),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('Tervezett időtartam:', style: TextStyle(fontWeight: FontWeight.w600)),
-                Text('${hours.toStringAsFixed(1)} óra (${(hours * 60).round()} perc)', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
+                const Text(S.plannedDuration, style: TextStyle(fontWeight: FontWeight.w600)),
+                Text(S.hoursAndMinutes(hours.toStringAsFixed(1), (hours * 60).round()), style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
               ],
             ),
             Slider(
@@ -1317,24 +1356,24 @@ class _NutritionCalculatorSheetState extends State<NutritionCalculatorSheet> {
               min: 0.5,
               max: 6.0,
               divisions: 11,
-              label: '${hours.toStringAsFixed(1)} óra',
+              label: S.hours(hours.toStringAsFixed(1)),
               onChanged: (v) => setState(() => hours = v),
             ),
             const SizedBox(height: 10),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('Cél CH bevitel / óra:', style: TextStyle(fontWeight: FontWeight.w600)),
-                Text('$carbTargetPerHour g CH / óra', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.deepOrange)),
+                const Text(S.carbTargetLabel, style: TextStyle(fontWeight: FontWeight.w600)),
+                Text(S.carbsPerHour(carbTargetPerHour), style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.deepOrange)),
               ],
             ),
             const SizedBox(height: 8),
             SegmentedButton<int>(
               segments: const [
-                ButtonSegment(value: 40, label: Text('40g (Z1/Z2)')),
-                ButtonSegment(value: 60, label: Text('60g (Bázis)')),
-                ButtonSegment(value: 75, label: Text('75g (Féltáv)')),
-                ButtonSegment(value: 90, label: Text('90g (Profi)')),
+                ButtonSegment(value: 40, label: Text(S.carb40)),
+                ButtonSegment(value: 60, label: Text(S.carb60)),
+                ButtonSegment(value: 75, label: Text(S.carb75)),
+                ButtonSegment(value: 90, label: Text(S.carb90)),
               ],
               selected: {carbTargetPerHour},
               onSelectionChanged: (val) => setState(() => carbTargetPerHour = val.first),
@@ -1347,34 +1386,34 @@ class _NutritionCalculatorSheetState extends State<NutritionCalculatorSheet> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('SZÜKSÉGES FRISSÍTÉS ÖSSZESEN:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.brown)),
+                    const Text(S.totalFuelUpper, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.brown)),
                     const SizedBox(height: 10),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: [
                         Column(
                           children: [
-                            const Text('⚡ Szénhidrát', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.deepOrange)),
+                            const Text(S.carbs, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.deepOrange)),
                             Text('$totalCarbs g', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
                           ],
                         ),
                         Column(
                           children: [
-                            const Text('💧 Folyadék', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.blue)),
+                            const Text(S.fluid, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.blue)),
                             Text('$totalFluidMl ml', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
                           ],
                         ),
                         Column(
                           children: [
-                            const Text('🥤 Zselé (~25g)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.green)),
-                            Text('$gelCount db', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                            const Text(S.gel, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.green)),
+                            Text(S.pieces(gelCount), style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
                           ],
                         ),
                       ],
                     ),
                     const Divider(height: 20),
                     Text(
-                      '💡 Praktikus recept: $totalFluidMl ml izotóniás ital (kulacsokban) + ${(totalCarbs / 30).ceil()} db zselé vagy energiaszelet 20-30 percenként elosztva.',
+                      S.fuelRecipe(totalFluidMl, (totalCarbs / 30).ceil()),
                       style: TextStyle(fontSize: 12, color: Colors.brown[800]),
                     ),
                   ],
@@ -1387,7 +1426,7 @@ class _NutritionCalculatorSheetState extends State<NutritionCalculatorSheet> {
               child: ElevatedButton(
                 onPressed: () => Navigator.pop(context),
                 style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF455A64), foregroundColor: Colors.white),
-                child: const Text('BEZÁRÁS'),
+                child: const Text(S.closeUpper),
               ),
             ),
             const SizedBox(height: 20),
@@ -1399,7 +1438,7 @@ class _NutritionCalculatorSheetState extends State<NutritionCalculatorSheet> {
 }
 
 // ============================================================================
-// 3. PONT: FELSZERELÉS- ÉS ESZKÖZKÖVETŐ (GEAR TRACKER)
+// ITEM 3: GEAR TRACKER
 // ============================================================================
 class GearTrackerScreen extends StatefulWidget {
   final List<WorkoutItem> workouts;
@@ -1459,7 +1498,7 @@ class _GearTrackerScreenState extends State<GearTrackerScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Felszerelés & Eszköztár', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+        title: const Text(S.gearTitle, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
         backgroundColor: const Color(0xFFD32F2F),
         iconTheme: const IconThemeData(color: Colors.white),
       ),
@@ -1468,9 +1507,9 @@ class _GearTrackerScreenState extends State<GearTrackerScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Eszközök & Alkatrészek Állapota', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const Text(S.gearStatusTitle, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 6),
-            Text('Kövesd nyomon futócipőid, kerékpárláncod és felszereléseid amortizációját.', style: TextStyle(fontSize: 12, color: Colors.grey[700])),
+            Text(S.gearDesc, style: TextStyle(fontSize: 12, color: Colors.grey[700])),
             const SizedBox(height: 16),
             Card(
               elevation: 3,
@@ -1483,11 +1522,11 @@ class _GearTrackerScreenState extends State<GearTrackerScreen> {
                       children: [
                         const Icon(Icons.directions_run, color: Colors.green, size: 26),
                         const SizedBox(width: 8),
-                        const Text('Elsődleges Futócipő', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        const Text(S.primaryShoe, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                         const Spacer(),
                         TextButton(
-                          onPressed: () => _confirmReset(context, 'Új futócipő használatba vétele (kilométerek lenullázása)', _resetShoe),
-                          child: const Text('Új cipő / Reset', style: TextStyle(fontSize: 12, color: Colors.blue)),
+                          onPressed: () => _confirmReset(context, S.newShoeHint, _resetShoe),
+                          child: const Text(S.newShoeReset, style: TextStyle(fontSize: 12, color: Colors.blue)),
                         ),
                       ],
                     ),
@@ -1495,8 +1534,8 @@ class _GearTrackerScreenState extends State<GearTrackerScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text('${activeShoeKm.toStringAsFixed(1)} km lefutva', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                        Text('Ajánlott csere: ${shoeLimit.toInt()} km', style: TextStyle(color: Colors.grey[700], fontSize: 13)),
+                        Text(S.kmRun(activeShoeKm.toStringAsFixed(1)), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                        Text(S.recommendedReplace(shoeLimit.toInt()), style: TextStyle(color: Colors.grey[700], fontSize: 13)),
                       ],
                     ),
                     const SizedBox(height: 8),
@@ -1511,7 +1550,7 @@ class _GearTrackerScreenState extends State<GearTrackerScreen> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      shoePct >= 0.9 ? '⚠️ A cipő amortizációja a végéhez közeledik, érdemes cserélni a térdízületek védelmében!' : 'Állapot: Jó párnázás (${(shoePct * 100).toStringAsFixed(0)}% elhasználódás)',
+                      shoePct >= 0.9 ? S.shoeWorn : S.shoeOk((shoePct * 100).toStringAsFixed(0)),
                       style: TextStyle(fontSize: 12, color: shoePct >= 0.9 ? Colors.red[800] : Colors.grey[800], fontWeight: shoePct >= 0.9 ? FontWeight.bold : FontWeight.normal),
                     ),
                   ],
@@ -1530,11 +1569,11 @@ class _GearTrackerScreenState extends State<GearTrackerScreen> {
                       children: [
                         const Icon(Icons.directions_bike, color: Colors.orange, size: 26),
                         const SizedBox(width: 8),
-                        const Text('Kerékpárlánc & Hajtás', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        const Text(S.chainTitle, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                         const Spacer(),
                         TextButton(
-                          onPressed: () => _confirmReset(context, 'Új lánc feltétele (kilométerek lenullázása)', _resetChain),
-                          child: const Text('Új lánc / Reset', style: TextStyle(fontSize: 12, color: Colors.blue)),
+                          onPressed: () => _confirmReset(context, S.newChainHint, _resetChain),
+                          child: const Text(S.newChainReset, style: TextStyle(fontSize: 12, color: Colors.blue)),
                         ),
                       ],
                     ),
@@ -1542,8 +1581,8 @@ class _GearTrackerScreenState extends State<GearTrackerScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text('${activeChainKm.toStringAsFixed(1)} km letekerve', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                        Text('Ajánlott ellenőrzés: ${chainLimit.toInt()} km', style: TextStyle(color: Colors.grey[700], fontSize: 13)),
+                        Text(S.kmRidden(activeChainKm.toStringAsFixed(1)), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                        Text(S.recommendedCheck(chainLimit.toInt()), style: TextStyle(color: Colors.grey[700], fontSize: 13)),
                       ],
                     ),
                     const SizedBox(height: 8),
@@ -1558,7 +1597,7 @@ class _GearTrackerScreenState extends State<GearTrackerScreen> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      chainPct >= 0.9 ? '⚠️ Érdemes láncnyúlást mérni a fogaskoszorú megóvása érdekében!' : 'Lánc állapot: Megfelelő (${(chainPct * 100).toStringAsFixed(0)}% használat)',
+                      chainPct >= 0.9 ? S.chainWorn : S.chainOk((chainPct * 100).toStringAsFixed(0)),
                       style: TextStyle(fontSize: 12, color: chainPct >= 0.9 ? Colors.red[800] : Colors.grey[800], fontWeight: chainPct >= 0.9 ? FontWeight.bold : FontWeight.normal),
                     ),
                   ],
@@ -1577,11 +1616,11 @@ class _GearTrackerScreenState extends State<GearTrackerScreen> {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Úszóedzések & Neoprén', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        const Text(S.swimGearTitle, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                         const SizedBox(height: 3),
-                        Text('$swimCount rögzített úszóedzés a tervben', style: TextStyle(color: Colors.grey[700], fontSize: 13)),
+                        Text(S.swimWorkoutsInPlan(swimCount), style: TextStyle(color: Colors.grey[700], fontSize: 13)),
                         const SizedBox(height: 3),
-                        const Text('Neoprén tesztek ajánlottak a 21. héttől!', style: TextStyle(fontSize: 11, fontStyle: FontStyle.italic, color: Colors.blueGrey)),
+                        const Text(S.wetsuitHint, style: TextStyle(fontSize: 11, fontStyle: FontStyle.italic, color: Colors.blueGrey)),
                       ],
                     ),
                   ],
@@ -1598,16 +1637,16 @@ class _GearTrackerScreenState extends State<GearTrackerScreen> {
     showDialog(
       context: ctx,
       builder: (_) => AlertDialog(
-        title: const Text('Megerősítés'),
+        title: const Text(S.confirm),
         content: Text(msg),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Mégse')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text(S.cancel)),
           ElevatedButton(
             onPressed: () {
               onConfirm();
               Navigator.pop(ctx);
             },
-            child: const Text('Nullázás'),
+            child: const Text(S.reset),
           ),
         ],
       ),
@@ -1616,7 +1655,7 @@ class _GearTrackerScreenState extends State<GearTrackerScreen> {
 }
 
 // ============================================================================
-// 2. PONT: VIZUÁLIS GRAFIKONOK ÉS DIAGRAMOK KÉPERNYŐ
+// ITEM 2: CHARTS AND DIAGRAMS SCREEN
 // ============================================================================
 class ChartsScreen extends StatefulWidget {
   final List<WorkoutItem> workouts;
@@ -1653,7 +1692,7 @@ class _ChartsScreenState extends State<ChartsScreen> with SingleTickerProviderSt
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Edzéselemzés & Grafikonok', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+        title: const Text(S.analysisTitle, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
         backgroundColor: const Color(0xFFD32F2F),
         iconTheme: const IconThemeData(color: Colors.white),
         bottom: TabBar(
@@ -1663,9 +1702,9 @@ class _ChartsScreenState extends State<ChartsScreen> with SingleTickerProviderSt
           indicatorColor: Colors.amber,
           indicatorWeight: 3,
           tabs: const [
-            Tab(icon: Icon(Icons.bar_chart), text: 'Volumen'),
-            Tab(icon: Icon(Icons.pie_chart), text: 'Sportágak'),
-            Tab(icon: Icon(Icons.trending_up), text: 'Pulzus / Tempó'),
+            Tab(icon: Icon(Icons.bar_chart), text: S.volumeTab),
+            Tab(icon: Icon(Icons.pie_chart), text: S.sportsTab),
+            Tab(icon: Icon(Icons.trending_up), text: S.hrPaceTab),
           ],
         ),
       ),
@@ -1708,11 +1747,11 @@ class _ChartsScreenState extends State<ChartsScreen> with SingleTickerProviderSt
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('Heti Edzésmennyiség', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const Text(S.weeklyVolume, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               SegmentedButton<bool>(
                 segments: const [
-                  ButtonSegment(value: false, label: Text('Táv (km)')),
-                  ButtonSegment(value: true, label: Text('Idő (h)')),
+                  ButtonSegment(value: false, label: Text(S.distanceKm)),
+                  ButtonSegment(value: true, label: Text(S.timeH)),
                 ],
                 selected: {_showHours},
                 onSelectionChanged: (val) => setState(() => _showHours = val.first),
@@ -1721,7 +1760,7 @@ class _ChartsScreenState extends State<ChartsScreen> with SingleTickerProviderSt
           ),
           const SizedBox(height: 8),
           Text(
-            'Kék: Tervezett előírás • Zöld: Ténylegesen teljesített\n(Két ujjal görgethető az 50 hét során)',
+            S.volumeLegend,
             style: TextStyle(fontSize: 12, color: Colors.grey[700]),
           ),
           const SizedBox(height: 16),
@@ -1778,22 +1817,22 @@ class _ChartsScreenState extends State<ChartsScreen> with SingleTickerProviderSt
     final bikePct = total > 0 ? (bike / total * 100) : 0;
     final runPct = total > 0 ? (run / total * 100) : 0;
 
-    String scopeTitle = '${widget.selectedWeek}. Hét sportági aránya';
-    if (_distScope == 1) scopeTitle = '${currentBlock + 1}. Blokk ($startW–$endW. hét) megoszlása';
-    if (_distScope == 2) scopeTitle = 'Teljes eddigi szezon megoszlása';
+    String scopeTitle = S.weekSportShare(widget.selectedWeek);
+    if (_distScope == 1) scopeTitle = S.blockDistribution(currentBlock + 1, startW, endW);
+    if (_distScope == 2) scopeTitle = S.seasonShare;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Sportági Megoszlás & Arányok', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const Text(S.sportShareTitle, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 10),
           SegmentedButton<int>(
             segments: [
-              ButtonSegment(value: 0, label: Text('${widget.selectedWeek}. hét')),
-              ButtonSegment(value: 1, label: Text('${currentBlock + 1}. blokk')),
-              const ButtonSegment(value: 2, label: Text('Összesen')),
+              ButtonSegment(value: 0, label: Text(S.weekLower(widget.selectedWeek))),
+              ButtonSegment(value: 1, label: Text(S.blockLower(currentBlock + 1))),
+              const ButtonSegment(value: 2, label: Text(S.total)),
             ],
             selected: {_distScope},
             onSelectionChanged: (val) => setState(() => _distScope = val.first),
@@ -1820,7 +1859,7 @@ class _ChartsScreenState extends State<ChartsScreen> with SingleTickerProviderSt
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Text('Összes mért', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                            const Text(S.totalMeasured, style: TextStyle(fontSize: 11, color: Colors.grey)),
                             Text('${total.toStringAsFixed(1)}', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
                             const Text('km', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey)),
                           ],
@@ -1829,11 +1868,11 @@ class _ChartsScreenState extends State<ChartsScreen> with SingleTickerProviderSt
                     ),
                   ),
                   const SizedBox(height: 25),
-                  _buildSportRow(Icons.pool, 'Úszás', swim, swimPct.toDouble(), Colors.blue),
+                  _buildSportRow(Icons.pool, S.swim, swim, swimPct.toDouble(), Colors.blue),
                   const Divider(),
-                  _buildSportRow(Icons.directions_bike, 'Kerékpár / Görgő', bike, bikePct.toDouble(), Colors.orange),
+                  _buildSportRow(Icons.directions_bike, S.bikeTrainer, bike, bikePct.toDouble(), Colors.orange),
                   const Divider(),
-                  _buildSportRow(Icons.directions_run, 'Futás', run, runPct.toDouble(), Colors.green),
+                  _buildSportRow(Icons.directions_run, S.run, run, runPct.toDouble(), Colors.green),
                 ],
               ),
             ),
@@ -1885,7 +1924,7 @@ class _ChartsScreenState extends State<ChartsScreen> with SingleTickerProviderSt
           final s = _paceToSeconds(w.runPace);
           if (s > 0) {
             points.add({
-              'label': '${w.week}.h ${w.day.substring(0, 2)}',
+              'label': S.weekDayShort(w.week, w.day.substring(0, 2)),
               'hr': w.hr.toDouble(),
               'speed': (1000 / s) * 3.6,
               'detail': '${w.runPace} min/km | ${w.hr} bpm',
@@ -1893,7 +1932,7 @@ class _ChartsScreenState extends State<ChartsScreen> with SingleTickerProviderSt
           }
         } else if (_trendSport == 1 && w.actBike > 0 && w.bikeSpeed > 0) {
           points.add({
-            'label': '${w.week}.h ${w.day.substring(0, 2)}',
+            'label': S.weekDayShort(w.week, w.day.substring(0, 2)),
             'hr': w.hr.toDouble(),
             'speed': w.bikeSpeed,
             'detail': '${w.bikeSpeed} km/h | ${w.hr} bpm',
@@ -1910,11 +1949,11 @@ class _ChartsScreenState extends State<ChartsScreen> with SingleTickerProviderSt
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('Aerob Hatékonyság', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const Text(S.aerobicEfficiency, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               SegmentedButton<int>(
                 segments: const [
-                  ButtonSegment(value: 0, label: Text('Futás')),
-                  ButtonSegment(value: 1, label: Text('Bringa')),
+                  ButtonSegment(value: 0, label: Text(S.run)),
+                  ButtonSegment(value: 1, label: Text(S.bike)),
                 ],
                 selected: {_trendSport},
                 onSelectionChanged: (val) => setState(() => _trendSport = val.first),
@@ -1924,8 +1963,8 @@ class _ChartsScreenState extends State<ChartsScreen> with SingleTickerProviderSt
           const SizedBox(height: 6),
           Text(
             _trendSport == 0
-                ? 'Futótempó és Mért Pulzus alakulása az edzések során'
-                : 'Kerékpár Sebesség és Mért Pulzus alakulása az edzések során',
+                ? S.runTrendTitle
+                : S.bikeTrendTitle,
             style: TextStyle(fontSize: 12, color: Colors.grey[700]),
           ),
           const SizedBox(height: 16),
@@ -1935,7 +1974,7 @@ class _ChartsScreenState extends State<ChartsScreen> with SingleTickerProviderSt
                 padding: const EdgeInsets.all(24),
                 child: Center(
                   child: Text(
-                    'Még nincs elég pulzussal rögzített ${_trendSport == 0 ? "futás" : "kerékpározás"} az adatbázisban.',
+                    S.notEnoughHrData(_trendSport == 0),
                     textAlign: TextAlign.center,
                     style: const TextStyle(color: Colors.grey),
                   ),
@@ -1956,14 +1995,14 @@ class _ChartsScreenState extends State<ChartsScreen> with SingleTickerProviderSt
                           children: [
                             Container(width: 12, height: 12, color: Colors.red),
                             const SizedBox(width: 4),
-                            const Text('Pulzus (bpm)', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                            const Text(S.hrBpm, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                           ],
                         ),
                         Row(
                           children: [
                             Container(width: 12, height: 12, color: _trendSport == 0 ? Colors.green : Colors.orange),
                             const SizedBox(width: 4),
-                            Text(_trendSport == 0 ? 'Tempó / Sebesség' : 'Sebesség (km/h)', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                            Text(_trendSport == 0 ? S.paceSpeed : S.speedLabel, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                           ],
                         ),
                       ],

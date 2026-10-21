@@ -21,44 +21,15 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.3'
+          flutter-version: '3.47.7'
           channel: 'stable'
           cache: true
 
-      - name: Setup Project and Dependencies
-        run: |
-          flutter create --org hu.ironman.edzesterv --project-name edzesterv .
-          cp main.dart lib/main.dart
-          mkdir -p assets
-          cp edzesterv_adatbazis.csv assets/
-          cp custom_pubspec.yaml pubspec.yaml
+      - name: Install dependencies
+        run: flutter pub get
 
-          # Patch android/app/build.gradle
-          python3 -c '
-          with open("android/app/build.gradle", "r") as f:
-              gradle = f.read()
-          if "coreLibraryDesugaringEnabled" not in gradle:
-              gradle = gradle.replace("compileOptions {", "compileOptions {\n        coreLibraryDesugaringEnabled true")
-          gradle = gradle.replace("minSdkVersion flutter.minSdkVersion", "minSdkVersion 21")
-          if "desugar_jdk_libs" not in gradle:
-              gradle += "\n\ndependencies {\n    coreLibraryDesugaring \"com.android.tools:desugar_jdk_libs:2.0.4\"\n}\n"
-          with open("android/app/build.gradle", "w") as f:
-              f.write(gradle)
-          '
-
-          # Patch AndroidManifest.xml
-          python3 -c '
-          manifest_path = "android/app/src/main/AndroidManifest.xml"
-          with open(manifest_path, "r") as f:
-              manifest = f.read()
-          perms = """    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>\n    <uses-permission android:name="android.permission.VIBRATE"/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>\n"""
-          if "POST_NOTIFICATIONS" not in manifest:
-              manifest = manifest.replace("<application", perms + "    <application")
-          with open(manifest_path, "w") as f:
-              f.write(manifest)
-          '
-
-          flutter pub get
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos
 
       - name: Build Release APK
         run: flutter build apk --release --verbose

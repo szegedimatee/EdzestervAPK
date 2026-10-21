@@ -137,8 +137,10 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
   int todayIndex = 16;
 
   final DateTime startDate = DateTime(2026, 10, 5);
-  final DateTime race1Date = DateTime(2027, 5, 30);
-  final DateTime race2Date = DateTime(2027, 9, 5);
+  DateTime race1Date = DateTime(2027, 5, 30);
+  DateTime race2Date = DateTime(2027, 9, 5);
+  String race1Name = '1. FÉLTÁV';
+  String race2Name = 'FŰZFŐ 70.3';
 
   final List<String> blockFocus = [
     "Aerob bázis, úszástechnika & görgő hozzászokás (Térdkímélő sík futások)",
@@ -208,6 +210,17 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
         if (saved != null) {
           w.updateFromMap(jsonDecode(saved));
         }
+      }
+
+      race1Name = prefs.getString('race1_name') ?? '1. FÉLTÁV';
+      race2Name = prefs.getString('race2_name') ?? 'FŰZFŐ 70.3';
+      final r1Str = prefs.getString('race1_date');
+      if (r1Str != null) {
+        try { race1Date = DateTime.parse(r1Str); } catch (_) {}
+      }
+      final r2Str = prefs.getString('race2_date');
+      if (r2Str != null) {
+        try { race2Date = DateTime.parse(r2Str); } catch (_) {}
       }
 
       setState(() {
@@ -728,6 +741,94 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
     );
   }
 
+  Future<void> _editRace(int raceNum) async {
+    final prefs = await SharedPreferences.getInstance();
+    final nameCtrl = TextEditingController(text: raceNum == 1 ? race1Name : race2Name);
+    DateTime tempDate = raceNum == 1 ? race1Date : race2Date;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Row(
+            children: [
+              const Icon(Icons.edit_calendar, color: Color(0xFFD32F2F)),
+              const SizedBox(width: 8),
+              Text('$raceNum. Verseny Beállítása', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: nameCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Verseny megnevezése',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.flag),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text('Választott versenynap:', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+              const SizedBox(height: 6),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  side: const BorderSide(color: Color(0xFFD32F2F)),
+                ),
+                icon: const Icon(Icons.calendar_today, color: Color(0xFFD32F2F)),
+                label: Text(
+                  '${tempDate.year}. ${tempDate.month.toString().padLeft(2, '0')}. ${tempDate.day.toString().padLeft(2, '0')}.',
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
+                ),
+                onPressed: () async {
+                  final picked = await showDatePicker(
+                    context: context,
+                    initialDate: tempDate,
+                    firstDate: DateTime(2025, 1, 1),
+                    lastDate: DateTime(2030, 12, 31),
+                  );
+                  if (picked != null) {
+                    setDialogState(() => tempDate = picked);
+                  }
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Mégse'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2E7D32), foregroundColor: Colors.white),
+              onPressed: () async {
+                if (raceNum == 1) {
+                  setState(() {
+                    race1Name = nameCtrl.text.trim().isEmpty ? '1. FÉLTÁV' : nameCtrl.text.trim();
+                    race1Date = tempDate;
+                  });
+                  await prefs.setString('race1_name', race1Name);
+                  await prefs.setString('race1_date', race1Date.toIso8601String());
+                } else {
+                  setState(() {
+                    race2Name = nameCtrl.text.trim().isEmpty ? 'FŰZFŐ 70.3' : nameCtrl.text.trim();
+                    race2Date = tempDate;
+                  });
+                  await prefs.setString('race2_name', race2Name);
+                  await prefs.setString('race2_date', race2Date.toIso8601String());
+                }
+                Navigator.pop(ctx);
+              },
+              child: const Text('Mentés'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildRaceCountdownCard() {
     final now = DateTime.now();
     final daysToRace1 = race1Date.difference(now).inDays;
@@ -735,6 +836,9 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
 
     final daysToRace2 = race2Date.difference(now).inDays;
     final weeksToRace2 = (daysToRace2 / 7).ceil();
+
+    final date1Str = '${race1Date.month}.${race1Date.day}.';
+    final date2Str = '${race2Date.month}.${race2Date.day}.';
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -756,40 +860,64 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
               const SizedBox(width: 6),
               const Text('VERSENYEK VISSZASZÁMLÁLÓJA', style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
               const Spacer(),
-              Text('Ma: 2026. okt. 21. ($currentWeek. hét)', style: const TextStyle(color: Colors.white54, fontSize: 11)),
+              Text('Koppints a módosításhoz ✎', style: TextStyle(color: Colors.amber[200], fontSize: 10, fontStyle: FontStyle.italic)),
             ],
           ),
           const SizedBox(height: 8),
           Row(
             children: [
               Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(color: Colors.white.withOpacity(0.08), borderRadius: BorderRadius.circular(8)),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('1. FÉLTÁV (Május 30.)', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 3),
-                      Text('$daysToRace1 nap', style: const TextStyle(color: Colors.amber, fontSize: 18, fontWeight: FontWeight.bold)),
-                      Text('$weeksToRace1 hét hátralévő felkészülés', style: const TextStyle(color: Colors.white70, fontSize: 10)),
-                    ],
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: () => _editRace(1),
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(color: Colors.white.withOpacity(0.08), borderRadius: BorderRadius.circular(8)),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(child: Text('$race1Name ($date1Str)', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis)),
+                              const Icon(Icons.edit, color: Colors.white54, size: 12),
+                            ],
+                          ),
+                          const SizedBox(height: 3),
+                          Text('$daysToRace1 nap', style: const TextStyle(color: Colors.amber, fontSize: 18, fontWeight: FontWeight.bold)),
+                          Text('$weeksToRace1 hét hátralévő idő', style: const TextStyle(color: Colors.white70, fontSize: 10)),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(color: Colors.white.withOpacity(0.08), borderRadius: BorderRadius.circular(8)),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('FŰZFŐ 70.3 (Szept 5.)', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 3),
-                      Text('$daysToRace2 nap', style: const TextStyle(color: Colors.redAccent, fontSize: 18, fontWeight: FontWeight.bold)),
-                      Text('$weeksToRace2 hét hátralévő felkészülés', style: const TextStyle(color: Colors.white70, fontSize: 10)),
-                    ],
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: () => _editRace(2),
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(color: Colors.white.withOpacity(0.08), borderRadius: BorderRadius.circular(8)),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(child: Text('$race2Name ($date2Str)', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis)),
+                              const Icon(Icons.edit, color: Colors.white54, size: 12),
+                            ],
+                          ),
+                          const SizedBox(height: 3),
+                          Text('$daysToRace2 nap', style: const TextStyle(color: Colors.redAccent, fontSize: 18, fontWeight: FontWeight.bold)),
+                          Text('$weeksToRace2 hét hátralévő idő', style: const TextStyle(color: Colors.white70, fontSize: 10)),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),

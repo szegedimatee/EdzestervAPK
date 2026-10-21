@@ -46,6 +46,11 @@ class WorkoutItem {
   int hr;
   String notes;
 
+  // 3. Pont: Okos edzésfunkciók mezői
+  int carbsConsumed; // gramm szénhidrát
+  String stomachFeel; // Gyomorérzet (pl. 5/5 Kiváló, Enyhe puffadás)
+  String gearUsed; // Használt felszerelés megjegyzés (pl. Versenycipő, Neoprén)
+
   WorkoutItem({
     required this.index,
     required this.week,
@@ -64,6 +69,9 @@ class WorkoutItem {
     this.actTotal = 0.0,
     this.hr = 0,
     this.notes = '',
+    this.carbsConsumed = 0,
+    this.stomachFeel = '',
+    this.gearUsed = '',
   });
 
   Map<String, dynamic> toMap() {
@@ -77,6 +85,9 @@ class WorkoutItem {
       'actTotal': actTotal,
       'hr': hr,
       'notes': notes,
+      'carbsConsumed': carbsConsumed,
+      'stomachFeel': stomachFeel,
+      'gearUsed': gearUsed,
     };
   }
 
@@ -90,6 +101,9 @@ class WorkoutItem {
     actTotal = (map['actTotal'] as num?)?.toDouble() ?? (actSwim + actBike + actRun);
     hr = (map['hr'] as num?)?.toInt() ?? 0;
     notes = map['notes'] ?? '';
+    carbsConsumed = (map['carbsConsumed'] as num?)?.toInt() ?? 0;
+    stomachFeel = map['stomachFeel'] ?? '';
+    gearUsed = map['gearUsed'] ?? '';
   }
 }
 
@@ -108,6 +122,8 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
   int todayIndex = 16;
 
   final DateTime startDate = DateTime(2026, 10, 5);
+  final DateTime race1Date = DateTime(2027, 5, 30); // 34. hét vasárnap: 1. Féltáv
+  final DateTime race2Date = DateTime(2027, 9, 5);  // 48. hét vasárnap: Balatonfűzfő
 
   final List<String> blockFocus = [
     "Aerob bázis, úszástechnika & görgő hozzászokás (Térdkímélő sík futások)",
@@ -221,6 +237,24 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
       MaterialPageRoute(
         builder: (_) => ChartsScreen(workouts: workouts, currentWeek: currentWeek, selectedWeek: selectedWeek),
       ),
+    );
+  }
+
+  void _showGearTracker() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => GearTrackerScreen(workouts: workouts),
+      ),
+    );
+  }
+
+  void _showNutritionCalculator() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => const NutritionCalculatorSheet(),
     );
   }
 
@@ -487,6 +521,8 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
     final runPaceCtrl = TextEditingController(text: w.runPace);
     final hrCtrl = TextEditingController(text: w.hr > 0 ? w.hr.toString() : '');
     final notesCtrl = TextEditingController(text: w.notes);
+    final carbsCtrl = TextEditingController(text: w.carbsConsumed > 0 ? w.carbsConsumed.toString() : '');
+    final stomachCtrl = TextEditingController(text: w.stomachFeel);
 
     showModalBottomSheet(
       context: context,
@@ -540,6 +576,15 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                   Expanded(child: TextField(controller: notesCtrl, decoration: const InputDecoration(labelText: 'RPE / Megjegyzés', border: OutlineInputBorder()))),
                 ],
               ),
+              const SizedBox(height: 12),
+              // 3. Pont: Frissítés naplózása
+              Row(
+                children: [
+                  Expanded(child: TextField(controller: carbsCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Elfogyasztott CH (g)', prefixIcon: Icon(Icons.bolt, color: Colors.amber), border: OutlineInputBorder()))),
+                  const SizedBox(width: 10),
+                  Expanded(child: TextField(controller: stomachCtrl, decoration: const InputDecoration(labelText: 'Gyomorérzet (pl. 5/5 jó)', prefixIcon: Icon(Icons.sentiment_satisfied_alt), border: OutlineInputBorder()))),
+                ],
+              ),
               const SizedBox(height: 20),
               SizedBox(
                 width: double.infinity,
@@ -558,6 +603,8 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                     w.actTotal = double.parse((w.actSwim + w.actBike + w.actRun).toStringAsFixed(2));
                     w.hr = int.tryParse(hrCtrl.text) ?? 0;
                     w.notes = notesCtrl.text;
+                    w.carbsConsumed = int.tryParse(carbsCtrl.text) ?? 0;
+                    w.stomachFeel = stomachCtrl.text;
 
                     _saveWorkout(w);
                     Navigator.pop(ctx);
@@ -568,6 +615,83 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  // --------------------------------------------------------------------------
+  // 3. PONT: VERSENY VISSZASZÁMLÁLÓ KÁRTYA
+  // --------------------------------------------------------------------------
+  Widget _buildRaceCountdownCard() {
+    final now = DateTime.now();
+    final daysToRace1 = race1Date.difference(now).inDays;
+    final weeksToRace1 = (daysToRace1 / 7).ceil();
+
+    final daysToRace2 = race2Date.difference(now).inDays;
+    final weeksToRace2 = (daysToRace2 / 7).ceil();
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF263238), Color(0xFF37474F)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2))],
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.flag_rounded, color: Colors.amber, size: 20),
+              const SizedBox(width: 6),
+              const Text('VERSENYEK VISSZASZÁMLÁLÓJA', style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+              const Spacer(),
+              Text('Ma: 2026. okt. 21. ($currentWeek. hét)', style: const TextStyle(color: Colors.white54, fontSize: 11)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              // 1. Féltáv
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: Colors.white.withOpacity(0.08), borderRadius: BorderRadius.circular(8)),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('1. FÉLTÁV (Május 30.)', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 3),
+                      Text('$daysToRace1 nap', style: const TextStyle(color: Colors.amber, fontSize: 18, fontWeight: FontWeight.bold)),
+                      Text('$weeksToRace1 hét hátralévő felkészülés', style: const TextStyle(color: Colors.white70, fontSize: 10)),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              // Balatonfűzfő 70.3 Főverseny
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: Colors.white.withOpacity(0.08), borderRadius: BorderRadius.circular(8)),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('FŰZFŐ 70.3 (Szept 5.)', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 3),
+                      Text('$daysToRace2 nap', style: const TextStyle(color: Colors.redAccent, fontSize: 18, fontWeight: FontWeight.bold)),
+                      Text('$weeksToRace2 hét hátralévő felkészülés', style: const TextStyle(color: Colors.white70, fontSize: 10)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -585,6 +709,16 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
         title: const Text('Ironman 70.3 Fűzfő', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
         backgroundColor: const Color(0xFFD32F2F),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.bolt_rounded, color: Colors.amber),
+            tooltip: 'Frissítés Kalkulátor',
+            onPressed: _showNutritionCalculator,
+          ),
+          IconButton(
+            icon: const Icon(Icons.construction_rounded, color: Colors.white),
+            tooltip: 'Felszerelés & Eszköztár',
+            onPressed: _showGearTracker,
+          ),
           IconButton(
             icon: const Icon(Icons.show_chart_rounded, color: Colors.white),
             tooltip: 'Grafikonok és Diagramok',
@@ -604,8 +738,11 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
       ),
       body: Column(
         children: [
+          // 3. PONT: VERSENY VISSZASZÁMLÁLÓ
+          _buildRaceCountdownCard(),
+
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
             color: Colors.grey[200],
             child: Row(
               children: [
@@ -673,7 +810,7 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                         Text(w.desc, style: const TextStyle(fontSize: 13)),
                         const SizedBox(height: 6),
                         Text('Terv: ${w.planDist} km (${w.planTime.toInt()}p) [${w.zone}]', style: TextStyle(color: Colors.grey[800], fontSize: 12, fontWeight: FontWeight.w600)),
-                        if (w.actTotal > 0 || w.hr > 0 || w.notes.isNotEmpty) ...[
+                        if (w.actTotal > 0 || w.hr > 0 || w.notes.isNotEmpty || w.carbsConsumed > 0) ...[
                           const SizedBox(height: 6),
                           Container(
                             padding: const EdgeInsets.all(8),
@@ -697,6 +834,17 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                                       if (w.actSwim > 0) Text('🏊 ${w.actSwim}km (${w.swimPace})', style: const TextStyle(fontSize: 11, color: Colors.blue)),
                                       if (w.actBike > 0) Text('🚴 ${w.actBike}km (${w.bikeSpeed}km/h)', style: const TextStyle(fontSize: 11, color: Colors.orange)),
                                       if (w.actRun > 0) Text('🏃 ${w.actRun}km (${w.runPace})', style: const TextStyle(fontSize: 11, color: Colors.green)),
+                                    ],
+                                  ),
+                                ],
+                                if (w.carbsConsumed > 0 || w.stomachFeel.isNotEmpty) ...[
+                                  const SizedBox(height: 3),
+                                  Row(
+                                    children: [
+                                      if (w.carbsConsumed > 0)
+                                        Text('⚡ Frissítés: ${w.carbsConsumed}g CH ', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.deepOrange)),
+                                      if (w.stomachFeel.isNotEmpty)
+                                        Text('(${w.stomachFeel})', style: TextStyle(fontSize: 11, color: Colors.grey[800])),
                                     ],
                                   ),
                                 ],
@@ -741,6 +889,360 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
         const SizedBox(width: 5),
         Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
       ],
+    );
+  }
+}
+
+// ============================================================================
+// 3. PONT: SZÉNHIDRÁT & FRISSÍTÉS KALKULÁTOR
+// ============================================================================
+class NutritionCalculatorSheet extends StatefulWidget {
+  const NutritionCalculatorSheet({super.key});
+
+  @override
+  State<NutritionCalculatorSheet> createState() => _NutritionCalculatorSheetState();
+}
+
+class _NutritionCalculatorSheetState extends State<NutritionCalculatorSheet> {
+  double hours = 2.5; // alapértelmezett 2.5 óra
+  int carbTargetPerHour = 60; // 60g / óra
+
+  @override
+  Widget build(BuildContext context) {
+    final totalCarbs = (hours * carbTargetPerHour).round();
+    final totalFluidMl = (hours * 600).round(); // ~600 ml / óra folyadék
+    final gelCount = (totalCarbs / 25).toStringAsFixed(1); // 1 zselé ~25g CH
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom, left: 20, right: 20, top: 20),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.bolt, color: Colors.amber, size: 28),
+                const SizedBox(width: 8),
+                const Text('Szénhidrát & Frissítés Tervező', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text('Kalkuláld ki a szükséges energiát és folyadékot a hosszú edzésekhez és versenyekhez.', style: TextStyle(fontSize: 12, color: Colors.grey[700])),
+            const Divider(height: 24),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Tervezett időtartam:', style: TextStyle(fontWeight: FontWeight.w600)),
+                Text('${hours.toStringAsFixed(1)} óra (${(hours * 60).round()} perc)', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
+              ],
+            ),
+            Slider(
+              value: hours,
+              min: 0.5,
+              max: 6.0,
+              divisions: 11,
+              label: '${hours.toStringAsFixed(1)} óra',
+              onChanged: (v) => setState(() => hours = v),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Cél CH bevitel / óra:', style: TextStyle(fontWeight: FontWeight.w600)),
+                Text('$carbTargetPerHour g CH / óra', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.deepOrange)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            SegmentedButton<int>(
+              segments: const [
+                ButtonSegment(value: 40, label: Text('40g (Z1/Z2)')),
+                ButtonSegment(value: 60, label: Text('60g (Bázis)')),
+                ButtonSegment(value: 75, label: Text('75g (Féltáv)')),
+                ButtonSegment(value: 90, label: Text('90g (Profi)')),
+              ],
+              selected: {carbTargetPerHour},
+              onSelectionChanged: (val) => setState(() => carbTargetPerHour = val.first),
+            ),
+            const SizedBox(height: 20),
+            Card(
+              color: Colors.amber[50],
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('SZÜKSÉGES FRISSÍTÉS ÖSSZESEN:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.brown)),
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        Column(
+                          children: [
+                            const Text('⚡ Szénhidrát', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.deepOrange)),
+                            Text('$totalCarbs g', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                        Column(
+                          children: [
+                            const Text('💧 Folyadék', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.blue)),
+                            Text('$totalFluidMl ml', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                        Column(
+                          children: [
+                            const Text('🥤 Zselé (~25g)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.green)),
+                            Text('$gelCount db', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const Divider(height: 20),
+                    Text(
+                      '💡 Praktikus recept: $totalFluidMl ml izotóniás ital (kulacsokban) + ${(totalCarbs / 30).ceil()} db zselé vagy energiaszelet 20-30 percenként elosztva.',
+                      style: TextStyle(fontSize: 12, color: Colors.brown[800]),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF455A64), foregroundColor: Colors.white),
+                child: const Text('BEZÁRÁS'),
+              ),
+            ),
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// 3. PONT: FELSZERELÉS- ÉS ESZKÖZKÖVETŐ (GEAR TRACKER)
+// ============================================================================
+class GearTrackerScreen extends StatefulWidget {
+  final List<WorkoutItem> workouts;
+
+  const GearTrackerScreen({super.key, required this.workouts});
+
+  @override
+  State<GearTrackerScreen> createState() => _GearTrackerScreenState();
+}
+
+class _GearTrackerScreenState extends State<GearTrackerScreen> {
+  double shoeLimit = 800; // km
+  double chainLimit = 3000; // km
+  double tireLimit = 4000; // km
+
+  double customShoeOffset = 0;
+  double customChainOffset = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadGearOffsets();
+  }
+
+  Future<void> _loadGearOffsets() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      customShoeOffset = prefs.getDouble('gear_shoe_offset') ?? 0;
+      customChainOffset = prefs.getDouble('gear_chain_offset') ?? 0;
+    });
+  }
+
+  Future<void> _resetShoe() async {
+    final prefs = await SharedPreferences.getInstance();
+    double totalRun = widget.workouts.fold(0.0, (sum, w) => sum + w.actRun);
+    await prefs.setDouble('gear_shoe_offset', totalRun);
+    setState(() => customShoeOffset = totalRun);
+  }
+
+  Future<void> _resetChain() async {
+    final prefs = await SharedPreferences.getInstance();
+    double totalBike = widget.workouts.fold(0.0, (sum, w) => sum + w.actBike);
+    await prefs.setDouble('gear_chain_offset', totalBike);
+    setState(() => customChainOffset = totalBike);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    double totalRun = widget.workouts.fold(0.0, (sum, w) => sum + w.actRun);
+    double totalBike = widget.workouts.fold(0.0, (sum, w) => sum + w.actBike);
+    int swimCount = widget.workouts.where((w) => w.actSwim > 0).length;
+
+    double activeShoeKm = (totalRun - customShoeOffset).clamp(0, 99999);
+    double activeChainKm = (totalBike - customChainOffset).clamp(0, 99999);
+
+    double shoePct = (activeShoeKm / shoeLimit).clamp(0.0, 1.0);
+    double chainPct = (activeChainKm / chainLimit).clamp(0.0, 1.0);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Felszerelés & Eszköztár', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+        backgroundColor: const Color(0xFFD32F2F),
+        iconTheme: const IconThemeData(color: Colors.white),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Eszközök & Alkatrészek Állapota', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            Text('Kövesd nyomon futócipőid, kerékpárláncod és felszereléseid amortizációját.', style: TextStyle(fontSize: 12, color: Colors.grey[700])),
+            const SizedBox(height: 16),
+
+            // 1. Futócipő kártya
+            Card(
+              elevation: 3,
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.directions_run, color: Colors.green, size: 26),
+                        const SizedBox(width: 8),
+                        const Text('Elsődleges Futócipő', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        const Spacer(),
+                        TextButton(
+                          onPressed: () => _confirmReset(context, 'Új futócipő használatba vétele (kilométerek lenullázása)', _resetShoe),
+                          child: const Text('Új cipő / Reset', style: TextStyle(fontSize: 12, color: Colors.blue)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('${activeShoeKm.toStringAsFixed(1)} km lefutva', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                        Text('Ajánlott csere: ${shoeLimit.toInt()} km', style: TextStyle(color: Colors.grey[700], fontSize: 13)),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: LinearProgressIndicator(
+                        value: shoePct,
+                        minHeight: 10,
+                        backgroundColor: Colors.grey[200],
+                        valueColor: AlwaysStoppedAnimation<Color>(shoePct >= 0.9 ? Colors.red : (shoePct >= 0.75 ? Colors.orange : Colors.green)),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      shoePct >= 0.9 ? '⚠️ A cipő amortizációja a végéhez közeledik, érdemes cserélni a térdízületek védelmében!' : 'Állapot: Jó párnázás (${(shoePct * 100).toStringAsFixed(0)}% elhasználódás)',
+                      style: TextStyle(fontSize: 12, color: shoePct >= 0.9 ? Colors.red[800] : Colors.grey[800], fontWeight: shoePct >= 0.9 ? FontWeight.bold : FontWeight.normal),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+
+            // 2. Kerékpárlánc & Gumik
+            Card(
+              elevation: 3,
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.directions_bike, color: Colors.orange, size: 26),
+                        const SizedBox(width: 8),
+                        const Text('Kerékpárlánc & Hajtás', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        const Spacer(),
+                        TextButton(
+                          onPressed: () => _confirmReset(context, 'Új lánc feltétele (kilométerek lenullázása)', _resetChain),
+                          child: const Text('Új lánc / Reset', style: TextStyle(fontSize: 12, color: Colors.blue)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('${activeChainKm.toStringAsFixed(1)} km letekerve', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                        Text('Ajánlott ellenőrzés: ${chainLimit.toInt()} km', style: TextStyle(color: Colors.grey[700], fontSize: 13)),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: LinearProgressIndicator(
+                        value: chainPct,
+                        minHeight: 10,
+                        backgroundColor: Colors.grey[200],
+                        valueColor: AlwaysStoppedAnimation<Color>(chainPct >= 0.9 ? Colors.red : (chainPct >= 0.75 ? Colors.orange : Colors.green)),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      chainPct >= 0.9 ? '⚠️ Érdemes láncnyúlást mérni a fogaskoszorú megóvása érdekében!' : 'Lánc állapot: Megfelelő (${(chainPct * 100).toStringAsFixed(0)}% használat)',
+                      style: TextStyle(fontSize: 12, color: chainPct >= 0.9 ? Colors.red[800] : Colors.grey[800], fontWeight: chainPct >= 0.9 ? FontWeight.bold : FontWeight.normal),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+
+            // 3. Neoprén & Úszófelszerelés
+            Card(
+              elevation: 3,
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Row(
+                  children: [
+                    const Icon(Icons.pool, color: Colors.blue, size: 26),
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Úszóedzések & Neoprén', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 3),
+                        Text('$swimCount rögzített úszóedzés a tervben', style: TextStyle(color: Colors.grey[700], fontSize: 13)),
+                        const SizedBox(height: 3),
+                        const Text('Neoprén tesztek ajánlottak a 21. héttől!', style: TextStyle(fontSize: 11, fontStyle: FontStyle.italic, color: Colors.blueGrey)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _confirmReset(BuildContext ctx, String msg, VoidCallback onConfirm) {
+    showDialog(
+      context: ctx,
+      builder: (_) => AlertDialog(
+        title: const Text('Megerősítés'),
+        content: Text(msg),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Mégse')),
+          ElevatedButton(
+            onPressed: () {
+              onConfirm();
+              Navigator.pop(ctx);
+            },
+            child: const Text('Nullázás'),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -810,13 +1312,9 @@ class _ChartsScreenState extends State<ChartsScreen> with SingleTickerProviderSt
     );
   }
 
-  // --------------------------------------------------------------------------
-  // 1. HETI VOLUMEN GRAFIKON (50 HÉT OSZLOPDIAGRAM)
-  // --------------------------------------------------------------------------
   bool _showHours = false;
 
   Widget _buildVolumeChartTab() {
-    // Collect 50 weeks data
     final List<Map<String, double>> weekData = [];
     double maxVal = 10.0;
 
@@ -904,10 +1402,7 @@ class _ChartsScreenState extends State<ChartsScreen> with SingleTickerProviderSt
     );
   }
 
-  // --------------------------------------------------------------------------
-  // 2. SPORTÁGI MEGOSZLÁS (DONUT KÖRDIAGRAM)
-  // --------------------------------------------------------------------------
-  int _distScope = 0; // 0: Aktuális hét, 1: Aktuális 5 hetes blokk, 2: Teljes szezon eddig
+  int _distScope = 0;
 
   Widget _buildSportDistributionTab() {
     double swim = 0, bike = 0, run = 0;
@@ -1017,10 +1512,7 @@ class _ChartsScreenState extends State<ChartsScreen> with SingleTickerProviderSt
     );
   }
 
-  // --------------------------------------------------------------------------
-  // 3. PULZUS ÉS TEMPÓ / SEBESSÉG FEJLŐDÉSI GÖRBE
-  // --------------------------------------------------------------------------
-  int _trendSport = 0; // 0: Futás (Tempó vs Pulzus), 1: Bringa (Sebesség vs Pulzus)
+  int _trendSport = 0;
 
   int _paceToSeconds(String pace) {
     if (pace.isEmpty || pace == '-') return 0;
@@ -1046,7 +1538,7 @@ class _ChartsScreenState extends State<ChartsScreen> with SingleTickerProviderSt
             points.add({
               'label': '${w.week}.h ${w.day.substring(0, 2)}',
               'hr': w.hr.toDouble(),
-              'speed': (1000 / s) * 3.6, // km/h
+              'speed': (1000 / s) * 3.6,
               'detail': '${w.runPace} min/km | ${w.hr} bpm',
             });
           }
@@ -1173,10 +1665,6 @@ class _ChartsScreenState extends State<ChartsScreen> with SingleTickerProviderSt
   }
 }
 
-// ============================================================================
-// CUSTOM PAINTEREK A TELJESEN OFFLINE, GYORS GRAFIKONOKHOZ
-// ============================================================================
-
 class WeeklyBarChartPainter extends CustomPainter {
   final List<Map<String, double>> weekData;
   final double maxVal;
@@ -1204,14 +1692,12 @@ class WeeklyBarChartPainter extends CustomPainter {
     const double barWidth = 11.0;
     const double barSpacing = 36.0;
 
-    // Draw baseline
     canvas.drawLine(Offset(0, chartHeight), Offset(size.width, chartHeight), gridPaint);
 
     for (int i = 0; i < weekData.length; i++) {
       final w = i + 1;
       final x = i * barSpacing + 20;
 
-      // Highlight current week
       if (w == currentWeek) {
         canvas.drawRect(Rect.fromLTWH(x - 6, 0, barSpacing, chartHeight + 25), highlightPaint);
       }
@@ -1222,7 +1708,6 @@ class WeeklyBarChartPainter extends CustomPainter {
       final planH = maxVal > 0 ? (plan / maxVal) * (chartHeight - 20) : 0;
       final actH = maxVal > 0 ? (act / maxVal) * (chartHeight - 20) : 0;
 
-      // Draw plan bar
       canvas.drawRRect(
         RRect.fromRectAndRadius(
           Rect.fromLTWH(x, chartHeight - planH, barWidth, planH.toDouble()),
@@ -1231,7 +1716,6 @@ class WeeklyBarChartPainter extends CustomPainter {
         planPaint,
       );
 
-      // Draw act bar
       canvas.drawRRect(
         RRect.fromRectAndRadius(
           Rect.fromLTWH(x + barWidth + 2, chartHeight - actH, barWidth, actH.toDouble()),
@@ -1240,7 +1724,6 @@ class WeeklyBarChartPainter extends CustomPainter {
         actPaint,
       );
 
-      // Draw week number
       final textPainter = TextPainter(
         text: TextSpan(
           text: '$w',
@@ -1289,19 +1772,16 @@ class PieChartPainter extends CustomPainter {
       return;
     }
 
-    // Swim (Blue)
     final swimAngle = (swimPct / 100) * 2 * math.pi;
     paint.color = Colors.blue;
     canvas.drawArc(Rect.fromCircle(center: center, radius: radius - strokeWidth / 2), startAngle, swimAngle, false, paint);
     startAngle += swimAngle;
 
-    // Bike (Orange)
     final bikeAngle = (bikePct / 100) * 2 * math.pi;
     paint.color = Colors.orange;
     canvas.drawArc(Rect.fromCircle(center: center, radius: radius - strokeWidth / 2), startAngle, bikeAngle, false, paint);
     startAngle += bikeAngle;
 
-    // Run (Green)
     final runAngle = (runPct / 100) * 2 * math.pi;
     paint.color = Colors.green;
     canvas.drawArc(Rect.fromCircle(center: center, radius: radius - strokeWidth / 2), startAngle, runAngle, false, paint);
@@ -1372,7 +1852,6 @@ class TrendLineChartPainter extends CustomPainter {
       canvas.drawCircle(Offset(x, yHr), 4, dotPaintHr);
       canvas.drawCircle(Offset(x, ySpd), 4, dotPaintSpd);
 
-      // Label
       final tp = TextPainter(
         text: TextSpan(
           text: points[i]['label'],

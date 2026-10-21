@@ -26,27 +26,18 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Create Flutter project scaffold
+      - name: Setup Project and Dependencies
         run: |
+          # Create Android native wrapper
           flutter create --org hu.ironman.edzesterv --project-name edzesterv .
+          
+          # Replace with our custom files
           cp main.dart lib/main.dart
           mkdir -p assets
           cp edzesterv_adatbazis.csv assets/
+          cp custom_pubspec.yaml pubspec.yaml
           
-          # Add dependencies to pubspec.yaml
-          flutter pub add shared_preferences
-
-          # Ensure assets are declared in pubspec.yaml
-          python3 -c "
-          with open('pubspec.yaml', 'r') as f:
-              content = f.read()
-          if 'assets:' not in content:
-              content += '\nflutter:\n  assets:\n    - assets/edzesterv_adatbazis.csv\n'
-          else:
-              content = content.replace('assets:', 'assets:\n    - assets/edzesterv_adatbazis.csv')
-          with open('pubspec.yaml', 'w') as f:
-              f.write(content)
-          "
+          flutter pub get
 
       - name: Build Release APK
         run: flutter build apk --release

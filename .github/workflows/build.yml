@@ -1,0 +1,58 @@
+name: Build Ironman Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.3'
+          channel: 'stable'
+          cache: true
+
+      - name: Create Flutter project scaffold
+        run: |
+          flutter create --org hu.ironman.edzesterv --project-name edzesterv .
+          cp main.dart lib/main.dart
+          mkdir -p assets
+          cp edzesterv_adatbazis.csv assets/
+          
+          # Add dependencies to pubspec.yaml
+          flutter pub add shared_preferences
+
+          # Ensure assets are declared in pubspec.yaml
+          python3 -c "
+          with open('pubspec.yaml', 'r') as f:
+              content = f.read()
+          if 'assets:' not in content:
+              content += '\nflutter:\n  assets:\n    - assets/edzesterv_adatbazis.csv\n'
+          else:
+              content = content.replace('assets:', 'assets:\n    - assets/edzesterv_adatbazis.csv')
+          with open('pubspec.yaml', 'w') as f:
+              f.write(content)
+          "
+
+      - name: Build Release APK
+        run: flutter build apk --release
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: edzesterv-ironman-apk
+          path: build/app/outputs/flutter-apk/app-release.apk

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/services.dart' show rootBundle;
 
 void main() async {
@@ -212,6 +213,15 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
     final m = total ~/ 60;
     final s = total % 60;
     return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+  }
+
+  void _showChartsScreen() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ChartsScreen(workouts: workouts, currentWeek: currentWeek, selectedWeek: selectedWeek),
+      ),
+    );
   }
 
   void _showBlockStats() {
@@ -576,6 +586,11 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
         backgroundColor: const Color(0xFFD32F2F),
         actions: [
           IconButton(
+            icon: const Icon(Icons.show_chart_rounded, color: Colors.white),
+            tooltip: 'Grafikonok és Diagramok',
+            onPressed: _showChartsScreen,
+          ),
+          IconButton(
             icon: const Icon(Icons.grid_view_rounded, color: Colors.white),
             tooltip: '5 hetes blokkok',
             onPressed: _showBlockStats,
@@ -728,4 +743,650 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
       ],
     );
   }
+}
+
+// ============================================================================
+// 2. PONT: VIZUÁLIS GRAFIKONOK ÉS DIAGRAMOK KÉPERNYŐ
+// ============================================================================
+class ChartsScreen extends StatefulWidget {
+  final List<WorkoutItem> workouts;
+  final int currentWeek;
+  final int selectedWeek;
+
+  const ChartsScreen({
+    super.key,
+    required this.workouts,
+    required this.currentWeek,
+    required this.selectedWeek,
+  });
+
+  @override
+  State<ChartsScreen> createState() => _ChartsScreenState();
+}
+
+class _ChartsScreenState extends State<ChartsScreen> with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 3, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Edzéselemzés & Grafikonok', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+        backgroundColor: const Color(0xFFD32F2F),
+        iconTheme: const IconThemeData(color: Colors.white),
+        bottom: TabBar(
+          controller: _tabController,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white70,
+          indicatorColor: Colors.amber,
+          indicatorWeight: 3,
+          tabs: const [
+            Tab(icon: Icon(Icons.bar_chart), text: 'Volumen'),
+            Tab(icon: Icon(Icons.pie_chart), text: 'Sportágak'),
+            Tab(icon: Icon(Icons.trending_up), text: 'Pulzus / Tempó'),
+          ],
+        ),
+      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          _buildVolumeChartTab(),
+          _buildSportDistributionTab(),
+          _buildHeartRateTrendTab(),
+        ],
+      ),
+    );
+  }
+
+  // --------------------------------------------------------------------------
+  // 1. HETI VOLUMEN GRAFIKON (50 HÉT OSZLOPDIAGRAM)
+  // --------------------------------------------------------------------------
+  bool _showHours = false;
+
+  Widget _buildVolumeChartTab() {
+    // Collect 50 weeks data
+    final List<Map<String, double>> weekData = [];
+    double maxVal = 10.0;
+
+    for (int w = 1; w <= 50; w++) {
+      double plan = 0;
+      double act = 0;
+      for (var item in widget.workouts) {
+        if (item.week == w) {
+          plan += _showHours ? (item.planTime / 60) : item.planDist;
+          act += _showHours ? (item.planTime > 0 && item.actTotal > 0 ? (item.planTime / 60) : 0) : item.actTotal;
+        }
+      }
+      weekData.add({'plan': plan, 'act': act});
+      if (plan > maxVal) maxVal = plan;
+      if (act > maxVal) maxVal = act;
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Heti Edzésmennyiség', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment(value: false, label: Text('Táv (km)')),
+                  ButtonSegment(value: true, label: Text('Idő (h)')),
+                ],
+                selected: {_showHours},
+                onSelectionChanged: (val) => setState(() => _showHours = val.first),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Kék: Tervezett előírás • Zöld: Ténylegesen teljesített\n(Két ujjal görgethető az 50 hét során)',
+            style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+          ),
+          const SizedBox(height: 16),
+          Card(
+            elevation: 3,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: SizedBox(
+                height: 280,
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: CustomPaint(
+                    size: Size(50 * 36.0 + 40, 260),
+                    painter: WeeklyBarChartPainter(
+                      weekData: weekData,
+                      maxVal: maxVal,
+                      currentWeek: widget.currentWeek,
+                      unit: _showHours ? 'h' : 'km',
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Card(
+            color: Colors.blueGrey[50],
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  const Icon(Icons.info_outline, color: Colors.blueGrey),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Tipp: A 4., 8., 12., 16., 20., 24., 28., 35., 39., 43. hetek a regenerációs hetek a periodizációban, ahol a volumen visszaesik a szuperkompenzációhoz.',
+                      style: TextStyle(fontSize: 12, color: Colors.blueGrey[900]),
+                    ),
+                  )
+                ],
+              ),
+            ),
+          )
+        ],
+      ),
+    );
+  }
+
+  // --------------------------------------------------------------------------
+  // 2. SPORTÁGI MEGOSZLÁS (DONUT KÖRDIAGRAM)
+  // --------------------------------------------------------------------------
+  int _distScope = 0; // 0: Aktuális hét, 1: Aktuális 5 hetes blokk, 2: Teljes szezon eddig
+
+  Widget _buildSportDistributionTab() {
+    double swim = 0, bike = 0, run = 0;
+
+    int currentBlock = ((widget.currentWeek - 1) ~/ 5);
+    int startW = currentBlock * 5 + 1;
+    int endW = (currentBlock + 1) * 5;
+
+    for (var w in widget.workouts) {
+      bool include = false;
+      if (_distScope == 0 && w.week == widget.selectedWeek) include = true;
+      if (_distScope == 1 && w.week >= startW && w.week <= endW) include = true;
+      if (_distScope == 2) include = true;
+
+      if (include) {
+        swim += w.actSwim;
+        bike += w.actBike;
+        run += w.actRun;
+      }
+    }
+
+    final total = swim + bike + run;
+    final swimPct = total > 0 ? (swim / total * 100) : 0;
+    final bikePct = total > 0 ? (bike / total * 100) : 0;
+    final runPct = total > 0 ? (run / total * 100) : 0;
+
+    String scopeTitle = '${widget.selectedWeek}. Hét sportági aránya';
+    if (_distScope == 1) scopeTitle = '${currentBlock + 1}. Blokk ($startW–$endW. hét) megoszlása';
+    if (_distScope == 2) scopeTitle = 'Teljes eddigi szezon megoszlása';
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Sportági Megoszlás & Arányok', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 10),
+          SegmentedButton<int>(
+            segments: [
+              ButtonSegment(value: 0, label: Text('${widget.selectedWeek}. hét')),
+              ButtonSegment(value: 1, label: Text('${currentBlock + 1}. blokk')),
+              const ButtonSegment(value: 2, label: Text('Összesen')),
+            ],
+            selected: {_distScope},
+            onSelectionChanged: (val) => setState(() => _distScope = val.first),
+          ),
+          const SizedBox(height: 20),
+          Card(
+            elevation: 3,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  Text(scopeTitle, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    height: 200,
+                    width: 200,
+                    child: CustomPaint(
+                      painter: PieChartPainter(
+                        swimPct: swimPct.toDouble(),
+                        bikePct: bikePct.toDouble(),
+                        runPct: runPct.toDouble(),
+                      ),
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('Összes mért', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                            Text('${total.toStringAsFixed(1)}', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                            const Text('km', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 25),
+                  _buildSportRow(Icons.pool, 'Úszás', swim, swimPct.toDouble(), Colors.blue),
+                  const Divider(),
+                  _buildSportRow(Icons.directions_bike, 'Kerékpár / Görgő', bike, bikePct.toDouble(), Colors.orange),
+                  const Divider(),
+                  _buildSportRow(Icons.directions_run, 'Futás', run, runPct.toDouble(), Colors.green),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSportRow(IconData icon, String name, double km, double pct, Color color) {
+    return Row(
+      children: [
+        Icon(icon, color: color, size: 22),
+        const SizedBox(width: 8),
+        Text(name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+        const Spacer(),
+        Text('${km.toStringAsFixed(1)} km', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+        const SizedBox(width: 8),
+        Container(
+          width: 55,
+          alignment: Alignment.centerRight,
+          child: Text('${pct.toStringAsFixed(1)}%', style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 13)),
+        ),
+      ],
+    );
+  }
+
+  // --------------------------------------------------------------------------
+  // 3. PULZUS ÉS TEMPÓ / SEBESSÉG FEJLŐDÉSI GÖRBE
+  // --------------------------------------------------------------------------
+  int _trendSport = 0; // 0: Futás (Tempó vs Pulzus), 1: Bringa (Sebesség vs Pulzus)
+
+  int _paceToSeconds(String pace) {
+    if (pace.isEmpty || pace == '-') return 0;
+    final parts = pace.split(':');
+    try {
+      if (parts.length == 3) {
+        return int.parse(parts[0]) * 3600 + int.parse(parts[1]) * 60 + int.parse(parts[2]);
+      } else if (parts.length == 2) {
+        return int.parse(parts[0]) * 60 + int.parse(parts[1]);
+      }
+    } catch (_) {}
+    return 0;
+  }
+
+  Widget _buildHeartRateTrendTab() {
+    final List<Map<String, dynamic>> points = [];
+
+    for (var w in widget.workouts) {
+      if (w.hr > 0) {
+        if (_trendSport == 0 && w.actRun > 0 && w.runPace.isNotEmpty) {
+          final s = _paceToSeconds(w.runPace);
+          if (s > 0) {
+            points.add({
+              'label': '${w.week}.h ${w.day.substring(0, 2)}',
+              'hr': w.hr.toDouble(),
+              'speed': (1000 / s) * 3.6, // km/h
+              'detail': '${w.runPace} min/km | ${w.hr} bpm',
+            });
+          }
+        } else if (_trendSport == 1 && w.actBike > 0 && w.bikeSpeed > 0) {
+          points.add({
+            'label': '${w.week}.h ${w.day.substring(0, 2)}',
+            'hr': w.hr.toDouble(),
+            'speed': w.bikeSpeed,
+            'detail': '${w.bikeSpeed} km/h | ${w.hr} bpm',
+          });
+        }
+      }
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Aerob Hatékonyság', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              SegmentedButton<int>(
+                segments: const [
+                  ButtonSegment(value: 0, label: Text('Futás')),
+                  ButtonSegment(value: 1, label: Text('Bringa')),
+                ],
+                selected: {_trendSport},
+                onSelectionChanged: (val) => setState(() => _trendSport = val.first),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _trendSport == 0
+                ? 'Futótempó és Mért Pulzus alakulása az edzések során'
+                : 'Kerékpár Sebesség és Mért Pulzus alakulása az edzések során',
+            style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+          ),
+          const SizedBox(height: 16),
+          if (points.isEmpty)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Center(
+                  child: Text(
+                    'Még nincs elég pulzussal rögzített ${_trendSport == 0 ? "futás" : "kerékpározás"} az adatbázisban.',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.grey),
+                  ),
+                ),
+              ),
+            )
+          else ...[
+            Card(
+              elevation: 3,
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        Row(
+                          children: [
+                            Container(width: 12, height: 12, color: Colors.red),
+                            const SizedBox(width: 4),
+                            const Text('Pulzus (bpm)', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                        Row(
+                          children: [
+                            Container(width: 12, height: 12, color: _trendSport == 0 ? Colors.green : Colors.orange),
+                            const SizedBox(width: 4),
+                            Text(_trendSport == 0 ? 'Tempó / Sebesség' : 'Sebesség (km/h)', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      height: 240,
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: CustomPaint(
+                          size: Size(math.max(points.length * 45.0, 300.0), 220),
+                          painter: TrendLineChartPainter(points: points, isRun: _trendSport == 0),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text('Rögzített edzések részletei:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+            const SizedBox(height: 8),
+            ListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: points.length,
+              itemBuilder: (ctx, i) {
+                final p = points[i];
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 6),
+                  color: Colors.grey[50],
+                  child: ListTile(
+                    dense: true,
+                    leading: CircleAvatar(
+                      backgroundColor: _trendSport == 0 ? Colors.green[100] : Colors.orange[100],
+                      child: Icon(_trendSport == 0 ? Icons.directions_run : Icons.directions_bike, color: _trendSport == 0 ? Colors.green[900] : Colors.orange[900], size: 18),
+                    ),
+                    title: Text(p['label'], style: const TextStyle(fontWeight: FontWeight.bold)),
+                    trailing: Text(p['detail'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  ),
+                );
+              },
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// CUSTOM PAINTEREK A TELJESEN OFFLINE, GYORS GRAFIKONOKHOZ
+// ============================================================================
+
+class WeeklyBarChartPainter extends CustomPainter {
+  final List<Map<String, double>> weekData;
+  final double maxVal;
+  final int currentWeek;
+  final String unit;
+
+  WeeklyBarChartPainter({
+    required this.weekData,
+    required this.maxVal,
+    required this.currentWeek,
+    required this.unit,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final gridPaint = Paint()
+      ..color = Colors.grey[300]!
+      ..strokeWidth = 1;
+
+    final planPaint = Paint()..color = const Color(0xFF1976D2);
+    final actPaint = Paint()..color = const Color(0xFF2E7D32);
+    final highlightPaint = Paint()..color = Colors.red.withOpacity(0.12);
+
+    final double chartHeight = size.height - 40;
+    const double barWidth = 11.0;
+    const double barSpacing = 36.0;
+
+    // Draw baseline
+    canvas.drawLine(Offset(0, chartHeight), Offset(size.width, chartHeight), gridPaint);
+
+    for (int i = 0; i < weekData.length; i++) {
+      final w = i + 1;
+      final x = i * barSpacing + 20;
+
+      // Highlight current week
+      if (w == currentWeek) {
+        canvas.drawRect(Rect.fromLTWH(x - 6, 0, barSpacing, chartHeight + 25), highlightPaint);
+      }
+
+      final plan = weekData[i]['plan'] ?? 0;
+      final act = weekData[i]['act'] ?? 0;
+
+      final planH = maxVal > 0 ? (plan / maxVal) * (chartHeight - 20) : 0;
+      final actH = maxVal > 0 ? (act / maxVal) * (chartHeight - 20) : 0;
+
+      // Draw plan bar
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(x, chartHeight - planH, barWidth, planH.toDouble()),
+          const Radius.circular(2),
+        ),
+        planPaint,
+      );
+
+      // Draw act bar
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(x + barWidth + 2, chartHeight - actH, barWidth, actH.toDouble()),
+          const Radius.circular(2),
+        ),
+        actPaint,
+      );
+
+      // Draw week number
+      final textPainter = TextPainter(
+        text: TextSpan(
+          text: '$w',
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: w == currentWeek ? FontWeight.bold : FontWeight.normal,
+            color: w == currentWeek ? Colors.red[900] : Colors.grey[700],
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      textPainter.paint(canvas, Offset(x + 2, chartHeight + 6));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant WeeklyBarChartPainter oldDelegate) => true;
+}
+
+class PieChartPainter extends CustomPainter {
+  final double swimPct;
+  final double bikePct;
+  final double runPct;
+
+  PieChartPainter({
+    required this.swimPct,
+    required this.bikePct,
+    required this.runPct,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2;
+    const strokeWidth = 32.0;
+
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth;
+
+    double startAngle = -math.pi / 2;
+
+    if (swimPct + bikePct + runPct == 0) {
+      paint.color = Colors.grey[300]!;
+      canvas.drawCircle(center, radius - strokeWidth / 2, paint);
+      return;
+    }
+
+    // Swim (Blue)
+    final swimAngle = (swimPct / 100) * 2 * math.pi;
+    paint.color = Colors.blue;
+    canvas.drawArc(Rect.fromCircle(center: center, radius: radius - strokeWidth / 2), startAngle, swimAngle, false, paint);
+    startAngle += swimAngle;
+
+    // Bike (Orange)
+    final bikeAngle = (bikePct / 100) * 2 * math.pi;
+    paint.color = Colors.orange;
+    canvas.drawArc(Rect.fromCircle(center: center, radius: radius - strokeWidth / 2), startAngle, bikeAngle, false, paint);
+    startAngle += bikeAngle;
+
+    // Run (Green)
+    final runAngle = (runPct / 100) * 2 * math.pi;
+    paint.color = Colors.green;
+    canvas.drawArc(Rect.fromCircle(center: center, radius: radius - strokeWidth / 2), startAngle, runAngle, false, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant PieChartPainter oldDelegate) => true;
+}
+
+class TrendLineChartPainter extends CustomPainter {
+  final List<Map<String, dynamic>> points;
+  final bool isRun;
+
+  TrendLineChartPainter({required this.points, required this.isRun});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (points.isEmpty) return;
+
+    final double chartHeight = size.height - 35;
+    const double spacing = 45.0;
+
+    double minHr = 100, maxHr = 190;
+    double minSpd = isRun ? 8.0 : 20.0;
+    double maxSpd = isRun ? 15.0 : 38.0;
+
+    for (var p in points) {
+      final double hr = p['hr'];
+      final double s = p['speed'];
+      if (hr < minHr) minHr = hr - 5;
+      if (hr > maxHr) maxHr = hr + 5;
+      if (s < minSpd) minSpd = s - 1;
+      if (s > maxSpd) maxSpd = s + 1;
+    }
+
+    final hrPaint = Paint()
+      ..color = Colors.red
+      ..strokeWidth = 2.5
+      ..style = PaintingStyle.stroke;
+
+    final spdPaint = Paint()
+      ..color = isRun ? Colors.green : Colors.orange
+      ..strokeWidth = 2.5
+      ..style = PaintingStyle.stroke;
+
+    final dotPaintHr = Paint()..color = Colors.red;
+    final dotPaintSpd = Paint()..color = isRun ? Colors.green : Colors.orange;
+
+    final hrPath = Path();
+    final spdPath = Path();
+
+    for (int i = 0; i < points.length; i++) {
+      final x = i * spacing + 20;
+      final hr = points[i]['hr'];
+      final s = points[i]['speed'];
+
+      final yHr = chartHeight - ((hr - minHr) / (maxHr - minHr)) * (chartHeight - 20) - 10;
+      final ySpd = chartHeight - ((s - minSpd) / (maxSpd - minSpd)) * (chartHeight - 20) - 10;
+
+      if (i == 0) {
+        hrPath.moveTo(x, yHr);
+        spdPath.moveTo(x, ySpd);
+      } else {
+        hrPath.lineTo(x, yHr);
+        spdPath.lineTo(x, ySpd);
+      }
+
+      canvas.drawCircle(Offset(x, yHr), 4, dotPaintHr);
+      canvas.drawCircle(Offset(x, ySpd), 4, dotPaintSpd);
+
+      // Label
+      final tp = TextPainter(
+        text: TextSpan(
+          text: points[i]['label'],
+          style: const TextStyle(fontSize: 9, color: Colors.black87),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(x - 12, chartHeight + 6));
+    }
+
+    canvas.drawPath(hrPath, hrPaint);
+    canvas.drawPath(spdPath, spdPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant TrendLineChartPainter oldDelegate) => true;
 }

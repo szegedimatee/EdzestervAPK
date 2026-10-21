@@ -108,6 +108,19 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
 
   final DateTime startDate = DateTime(2026, 10, 5);
 
+  final List<String> blockFocus = [
+    "Aerob bázis, úszástechnika & görgő hozzászokás (Térdkímélő sík futások)",
+    "Állóképesség növelése, SweetSpot blokkok & törzserő",
+    "Téli volumenépítés, növekvő görgő- és futótávok",
+    "Téli csúcs + Thaiföldi 2 hetes edzőtábor jellegű blokk (úszás & futás)",
+    "Tavaszi nyitás: kinti 70-75km bringák & első téglaedzések",
+    "1. Féltáv specifikus építés: 80-90km bringák & hosszú téglák",
+    "Tapering + 1. FÉLTÁV VERSENY (Május vége/Júni eleje - Barátkozós!) + Regeneráció",
+    "Fűzfőre hangolás 1.: Emelt intenzitás (Z3/SweetSpot versenytempó blokkok)",
+    "Fűzfőre hangolás 2.: Csúcsterhelés & versenyszimulációs erős téglák (95km / 72km)",
+    "Tapering + 2. FÉLTÁV VERSENY: BALATONFŰZFŐ (Szept. eleje - MEGNYOMÓS!) + Levezetés"
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -207,7 +220,7 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.85,
+        initialChildSize: 0.88,
         maxChildSize: 0.95,
         minChildSize: 0.5,
         expand: false,
@@ -235,10 +248,21 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
 
                     int swimSecSum = 0;
                     int swimCnt = 0;
+                    int swimHrSum = 0;
+                    int swimHrCnt = 0;
+
                     double bikeSpdSum = 0;
                     int bikeCnt = 0;
+                    int bikeHrSum = 0;
+                    int bikeHrCnt = 0;
+
                     int runSecSum = 0;
                     int runCnt = 0;
+                    int runHrSum = 0;
+                    int runHrCnt = 0;
+
+                    int totalHrSum = 0;
+                    int totalHrCnt = 0;
 
                     for (var w in workouts) {
                       if (w.week >= startW && w.week <= endW) {
@@ -248,31 +272,63 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                         bikeKm += w.actBike;
                         runKm += w.actRun;
 
+                        if (w.hr > 0) {
+                          totalHrSum += w.hr;
+                          totalHrCnt++;
+                        }
+
                         final sSec = _paceToSeconds(w.swimPace);
-                        if (w.actSwim > 0 && sSec > 0) {
-                          swimSecSum += sSec;
-                          swimCnt++;
+                        if (w.actSwim > 0) {
+                          if (sSec > 0) {
+                            swimSecSum += sSec;
+                            swimCnt++;
+                          }
+                          if (w.hr > 0) {
+                            swimHrSum += w.hr;
+                            swimHrCnt++;
+                          }
                         }
-                        if (w.actBike > 0 && w.bikeSpeed > 0) {
-                          bikeSpdSum += w.bikeSpeed;
-                          bikeCnt++;
+
+                        if (w.actBike > 0) {
+                          if (w.bikeSpeed > 0) {
+                            bikeSpdSum += w.bikeSpeed;
+                            bikeCnt++;
+                          }
+                          if (w.hr > 0) {
+                            bikeHrSum += w.hr;
+                            bikeHrCnt++;
+                          }
                         }
-                        final rSec = _paceToSeconds(w.runPace);
-                        if (w.actRun > 0 && rSec > 0) {
-                          runSecSum += rSec;
-                          runCnt++;
+
+                        if (w.actRun > 0) {
+                          final rSec = _paceToSeconds(w.runPace);
+                          if (rSec > 0) {
+                            runSecSum += rSec;
+                            runCnt++;
+                          }
+                          if (w.hr > 0) {
+                            runHrSum += w.hr;
+                            runHrCnt++;
+                          }
                         }
                       }
                     }
 
                     final actKm = swimKm + bikeKm + runKm;
                     final pct = planKm > 0 ? (actKm / planKm * 100) : 0;
+                    final avgBlockHr = totalHrCnt > 0 ? (totalHrSum / totalHrCnt).toStringAsFixed(1) : '-';
+
                     final swimPaceStr = swimCnt > 0 ? _secondsToPace(swimSecSum / swimCnt) : '-';
-                    final bikeSpdStr = bikeCnt > 0 ? (bikeSpdSum / bikeCnt).toStringAsFixed(1) : '-';
+                    final swimHrStr = swimHrCnt > 0 ? '${(swimHrSum / swimHrCnt).round()} bpm' : '-';
+
+                    final bikeSpdStr = bikeCnt > 0 ? '${(bikeSpdSum / bikeCnt).toStringAsFixed(1)} km/h' : '-';
+                    final bikeHrStr = bikeHrCnt > 0 ? '${(bikeHrSum / bikeHrCnt).round()} bpm' : '-';
+
                     final runPaceStr = runCnt > 0 ? _secondsToPace(runSecSum / runCnt) : '-';
+                    final runHrStr = runHrCnt > 0 ? '${(runHrSum / runHrCnt).round()} bpm' : '-';
 
                     return Card(
-                      margin: const EdgeInsets.only(bottom: 10),
+                      margin: const EdgeInsets.only(bottom: 12),
                       elevation: 2,
                       child: Padding(
                         padding: const EdgeInsets.all(12),
@@ -283,17 +339,31 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 Text('${b + 1}. Blokk ($startW–$endW. hét)', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                                Text('${pct.toStringAsFixed(1)}%', style: TextStyle(fontWeight: FontWeight.bold, color: pct >= 80 ? Colors.green[700] : (pct > 0 ? Colors.orange[800] : Colors.grey))),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: pct >= 80 ? Colors.green[100] : (pct > 0 ? Colors.orange[100] : Colors.grey[200]),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    '${pct.toStringAsFixed(1)}%',
+                                    style: TextStyle(fontWeight: FontWeight.bold, color: pct >= 80 ? Colors.green[800] : (pct > 0 ? Colors.orange[900] : Colors.grey[700])),
+                                  ),
+                                ),
                               ],
                             ),
-                            const SizedBox(height: 6),
+                            const SizedBox(height: 4),
+                            Text(blockFocus[b], style: TextStyle(fontSize: 12, color: Colors.blueGrey[800], fontStyle: FontStyle.italic)),
+                            const Divider(height: 16),
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Text('Terv: ${planKm.toStringAsFixed(1)} km (${(planMin / 60).toStringAsFixed(1)}h)', style: TextStyle(color: Colors.grey[800], fontSize: 13)),
+                                Text('Terv: ${planKm.toStringAsFixed(1)} km (${(planMin / 60).toStringAsFixed(1)} óra)', style: TextStyle(color: Colors.grey[800], fontSize: 13)),
                                 Text('Mért: ${actKm.toStringAsFixed(2)} km', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF1B5E20))),
                               ],
                             ),
+                            const SizedBox(height: 4),
+                            Text('❤️ Blokk átlagpulzus: $avgBlockHr bpm', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFFC62828))),
                             const Divider(height: 16),
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -301,22 +371,28 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                                 Column(
                                   children: [
                                     const Text('🏊 ÚSZÁS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.blue)),
-                                    Text('${swimKm.toStringAsFixed(1)} km', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                                    Text(swimPaceStr, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                                    const SizedBox(height: 2),
+                                    Text('${swimKm.toStringAsFixed(1)} km', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                    Text('⏱ $swimPaceStr', style: const TextStyle(fontSize: 11, color: Colors.black87)),
+                                    Text('❤️ $swimHrStr', style: const TextStyle(fontSize: 10, color: Colors.grey)),
                                   ],
                                 ),
                                 Column(
                                   children: [
                                     const Text('🚴 BRINGA', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.orange)),
-                                    Text('${bikeKm.toStringAsFixed(1)} km', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                                    Text('$bikeSpdStr km/h', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                                    const SizedBox(height: 2),
+                                    Text('${bikeKm.toStringAsFixed(1)} km', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                    Text('⚡ $bikeSpdStr', style: const TextStyle(fontSize: 11, color: Colors.black87)),
+                                    Text('❤️ $bikeHrStr', style: const TextStyle(fontSize: 10, color: Colors.grey)),
                                   ],
                                 ),
                                 Column(
                                   children: [
                                     const Text('🏃 FUTÁS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.green)),
-                                    Text('${runKm.toStringAsFixed(1)} km', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                                    Text(runPaceStr, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                                    const SizedBox(height: 2),
+                                    Text('${runKm.toStringAsFixed(1)} km', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                    Text('⏱ $runPaceStr', style: const TextStyle(fontSize: 11, color: Colors.black87)),
+                                    Text('❤️ $runHrStr', style: const TextStyle(fontSize: 10, color: Colors.grey)),
                                   ],
                                 ),
                               ],
@@ -331,6 +407,58 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  void _showStats() {
+    double planMin = 0;
+    double planKm = 0;
+    double actKm = 0;
+    double swimKm = 0;
+    double bikeKm = 0;
+    double runKm = 0;
+    int hrSum = 0;
+    int hrCnt = 0;
+
+    for (var w in workouts) {
+      planMin += w.planTime;
+      planKm += w.planDist;
+      actKm += w.actTotal;
+      swimKm += w.actSwim;
+      bikeKm += w.actBike;
+      runKm += w.actRun;
+      if (w.hr > 0) {
+        hrSum += w.hr;
+        hrCnt++;
+      }
+    }
+
+    final pct = planKm > 0 ? (actKm / planKm * 100) : 0;
+    final avgHr = hrCnt > 0 ? (hrSum / hrCnt).toStringAsFixed(1) : '-';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Globális Összesítő', style: TextStyle(fontWeight: FontWeight.bold)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('• Összes tervezett idő: ${planMin.toInt()} perc (${(planMin / 60).toStringAsFixed(1)} óra)'),
+            Text('• Átlagos heti edzésidő: ${(planMin / 60 / 50).toStringAsFixed(1)} óra / hét'),
+            Text('• Összes tervezett táv: ${planKm.toStringAsFixed(1)} km'),
+            const Divider(height: 20),
+            Text('• Összes teljesített táv: ${actKm.toStringAsFixed(2)} km (${pct.toStringAsFixed(1)}%)', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1B5E20))),
+            const SizedBox(height: 4),
+            Text('  - 🏊 Úszás: ${swimKm.toStringAsFixed(2)} km'),
+            Text('  - 🚴 Bringa / Görgő: ${bikeKm.toStringAsFixed(2)} km'),
+            Text('  - 🏃 Futás: ${runKm.toStringAsFixed(2)} km'),
+            const Divider(height: 20),
+            Text('❤️ Átlagos mért pulzus: $avgHr bpm ($hrCnt edzés alapján)', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFC62828))),
+          ],
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Rendben'))],
       ),
     );
   }
@@ -434,44 +562,6 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
     );
   }
 
-  void _showStats() {
-    double planKm = 0;
-    double actKm = 0;
-    double swimKm = 0;
-    double bikeKm = 0;
-    double runKm = 0;
-
-    for (var w in workouts) {
-      planKm += w.planDist;
-      actKm += w.actTotal;
-      swimKm += w.actSwim;
-      bikeKm += w.actBike;
-      runKm += w.actRun;
-    }
-
-    final pct = planKm > 0 ? (actKm / planKm * 100) : 0;
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Globális Összesítő'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Tervezett táv: ${planKm.toStringAsFixed(1)} km'),
-            Text('Teljesített táv: ${actKm.toStringAsFixed(2)} km (${pct.toStringAsFixed(1)}%)'),
-            const Divider(),
-            Text('🏊 Úszás: ${swimKm.toStringAsFixed(1)} km'),
-            Text('🚴 Bringa: ${bikeKm.toStringAsFixed(1)} km'),
-            Text('🏃 Futás: ${runKm.toStringAsFixed(1)} km'),
-          ],
-        ),
-        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Rendben'))],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     if (isLoading) {
@@ -546,7 +636,7 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                   color: cardColor,
                   elevation: 2,
                   child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                     title: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -567,14 +657,42 @@ class _WorkoutHomeScreenState extends State<WorkoutHomeScreen> {
                         const SizedBox(height: 4),
                         Text(w.desc, style: const TextStyle(fontSize: 13)),
                         const SizedBox(height: 6),
-                        Row(
-                          children: [
-                            Text('Terv: ${w.planDist} km (${w.planTime.toInt()}p) [${w.zone}]', style: TextStyle(color: Colors.grey[800], fontSize: 12, fontWeight: FontWeight.w600)),
-                            const Spacer(),
-                            if (w.actTotal > 0)
-                              Text('Mért: ${w.actTotal} km', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1B5E20))),
-                          ],
-                        ),
+                        Text('Terv: ${w.planDist} km (${w.planTime.toInt()}p) [${w.zone}]', style: TextStyle(color: Colors.grey[800], fontSize: 12, fontWeight: FontWeight.w600)),
+                        if (w.actTotal > 0 || w.hr > 0 || w.notes.isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(color: Colors.black.withOpacity(0.04), borderRadius: BorderRadius.circular(6)),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Text('Mért össztáv: ${w.actTotal} km', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1B5E20), fontSize: 13)),
+                                    const Spacer(),
+                                    if (w.hr > 0)
+                                      Text('❤️ ${w.hr} bpm', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFC62828), fontSize: 13)),
+                                  ],
+                                ),
+                                if (w.actSwim > 0 || w.actBike > 0 || w.actRun > 0) ...[
+                                  const SizedBox(height: 3),
+                                  Wrap(
+                                    spacing: 8,
+                                    children: [
+                                      if (w.actSwim > 0) Text('🏊 ${w.actSwim}km (${w.swimPace})', style: const TextStyle(fontSize: 11, color: Colors.blue)),
+                                      if (w.actBike > 0) Text('🚴 ${w.actBike}km (${w.bikeSpeed}km/h)', style: const TextStyle(fontSize: 11, color: Colors.orange)),
+                                      if (w.actRun > 0) Text('🏃 ${w.actRun}km (${w.runPace})', style: const TextStyle(fontSize: 11, color: Colors.green)),
+                                    ],
+                                  ),
+                                ],
+                                if (w.notes.isNotEmpty) ...[
+                                  const SizedBox(height: 3),
+                                  Text('💬 ${w.notes}', style: TextStyle(fontSize: 11, fontStyle: FontStyle.italic, color: Colors.grey[800])),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                     onTap: () => _showEditSheet(w),
